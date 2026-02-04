@@ -1,3 +1,6 @@
+"""
+Author: Leo Sperber, 2025
+"""
 import scipy.io
 import numpy as np
 import torch
@@ -10,7 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
 
-
+# Function to handle mismatch between images and labels --> counts # of frames and labels and makes them the same length
 def mismatch(images, labels_arr):
     # Handle mismatch: Shave to the minimum length instead of discarding
     if images.shape[0] != len(labels_arr):
@@ -24,6 +27,7 @@ def mismatch(images, labels_arr):
         print(f"  - Match confirmed: {images.shape[0]} frames and labels.")
     return images, labels_arr
 
+# Function to compute %CBV on original size (H_var, 128) --> we do this by subtracting the baseline from the images and then dividing by the baseline
 def delta_cbv(images, labels_arr, use_log=True, robust=True):
         # Compute %CBV on original size (H_var, 128)
     baseline_mask = (labels_arr == -1)
@@ -52,6 +56,7 @@ def delta_cbv(images, labels_arr, use_log=True, robust=True):
     print(f"CBV range: min={cbv_data.min():.6f}, max={cbv_data.max():.6f}")
     return cbv_data, labels_arr[data_mask]
 
+# Function to clip the %CBV data to the bottom and top percentiles --> this is to remove outliers
 def clip(cbv_data, bottom, top):
     if cbv_data.size > 0:  # Avoid empty
         flattened = cbv_data.flatten()  # 1D: M * H_var * 128 values
@@ -61,6 +66,7 @@ def clip(cbv_data, bottom, top):
         cbv_clipped = np.clip(cbv_data, p_low, p_high)
     return cbv_clipped
 
+# Function to interpolate the %CBV data to the target size --> this is to resize the %CBV data to the target size
 def tensor_interpolate(cbv_data, target_size = 112):
     cbv_tensor = torch.from_numpy(cbv_data).unsqueeze(1)  # (M, 1, H_var, 128)
     resized_cbv = F.interpolate(
@@ -71,6 +77,7 @@ def tensor_interpolate(cbv_data, target_size = 112):
     )
     return resized_cbv
 
+# Function to apply a high pass filter to the %CBV data --> this is to remove low frequency noise
 def high_pass(cbv_data, frame_rate = 2.5):
     if cbv_data.size > 0:
         nyquist = frame_rate / 2
@@ -80,6 +87,7 @@ def high_pass(cbv_data, frame_rate = 2.5):
         cbv_data = signal.filtfilt(b, a, cbv_data, axis=0)  # Apply along time axis
     return cbv_data
 
+# Function to get the height and width of the %CBV data --> this is to resize the %CBV data to the target size
 def height_width_matfile(mat_files):
     heights = []
     widths = []
@@ -96,6 +104,7 @@ def height_width_matfile(mat_files):
 
     return heights, widths
 
+# Function to split the data into train and test sets --> this is to split the data into train and test sets
 def acq_wise_split(big_acquisition_indices,seed=42,split=0.8):
     # Split acquisition-wise into train and test (80% train, 20% test)
     unique_acqs = torch.unique(big_acquisition_indices)
@@ -122,6 +131,7 @@ def acq_wise_split(big_acquisition_indices,seed=42,split=0.8):
 
 import torch
 
+# Function to split the data into train and test sets --> this is to split the data into train and test sets
 def mid_split_whole(big_acquisition_indices, split=0.8):
     # Apply middle split (40% train, 20% test, 40% train) within each acquisition
     # on the concatenated dataset using big_acquisition_indices to group frames.
@@ -167,6 +177,7 @@ def mid_split_whole(big_acquisition_indices, split=0.8):
 
     return train_mask, test_mask
 
+# Function to shave the data off the start and end --> this is to remove the start and end of the data
 def data_shave(images, labels_arr, shave=0):
     # Shave off from start and end 
     M = images.shape[0]
@@ -175,6 +186,7 @@ def data_shave(images, labels_arr, shave=0):
     truncated_labels = labels_arr[shave : M - shave]
     return truncated_cbv, truncated_labels
 
+# Function to add shaded regions for contiguous segments of the same label --> this is to add shaded regions to the plot
 def add_label_shading(ax, labels, colors_dict, alpha=0.15):
     """Add shaded regions for contiguous segments of the same label."""
     if len(labels) == 0:
@@ -193,7 +205,7 @@ def add_label_shading(ax, labels, colors_dict, alpha=0.15):
             color = colors_dict.get(label, 'lightyellow')  # Fallback color
             ax.axvspan(start, end, color=color, alpha=alpha, zorder=0)
 
-
+# Function to plot the %CBV mean for a specific acquisition --> this is to plot the %CBV mean for a specific acquisition
 def plot_cbv_mean(acqs, images, labels, ACQ_INDICE):
     # Create mask for the specific acquisition
     acq_mask = (acqs == ACQ_INDICE)
@@ -218,7 +230,7 @@ def plot_cbv_mean(acqs, images, labels, ACQ_INDICE):
     ax.grid(alpha=0.3)
     plt.show()
 
-
+# Function to plot the %CBV samples --> this is to plot the %CBV samples
 def plot_cbv_samples(cbv_tensor, labels, start=1, step=5, n=10, cmap='inferno',
                      vmin=None, vmax=None, brain_roi=None):
     """
@@ -269,6 +281,7 @@ def plot_cbv_samples(cbv_tensor, labels, start=1, step=5, n=10, cmap='inferno',
 
     plt.show()
 
+# Function to compute the label distribution --> this is to compute the label distribution # no use in  baseline
 def pause_work_distrib(labels):
     # Compute label distribution (excluding -1, which isn't used in valid windows)
     label_counts = np.bincount(labels, minlength=2)  # Counts for 0, 1
@@ -279,8 +292,7 @@ def pause_work_distrib(labels):
         percentage = (count / total_valid * 100) if total_valid > 0 else 0
         print(f"Label {label}: {count} patches ({percentage:.2f}%)")
 
-
-
+# Function to normalize the data to [0, 1] --> this is to normalize the data to [0, 1]
 def norm(data):
     """
     Normalize image data to [0, 1] using min-max normalization.
@@ -328,7 +340,7 @@ def norm(data):
 
     return normalized_data
 
-
+# Function to compute the frame difference --> this is to compute the difference in haemodynamic response from frame to frame
 def frame_diff(images: np.ndarray, mode: str = "window", window: int = 8) -> np.ndarray:
     """
     Compute frame-to-frame hemodynamic change (differential imaging).
@@ -368,7 +380,7 @@ def frame_diff(images: np.ndarray, mode: str = "window", window: int = 8) -> np.
 
 import torch
 import torch.nn.functional as F
-
+# Function to pad or crop the %CBV data to the target size --> this is to pad or crop the %CBV data to the target size
 def tensor_pad_or_crop(cbv_data, target_size: int = 112):
     """
     Convert a fUS CBV acquisition to (N, 1, target_size, target_size) by 
@@ -429,7 +441,7 @@ def tensor_pad_or_crop(cbv_data, target_size: int = 112):
 import numpy as np
 
 import numpy as np
-
+# Function to pad or crop the %CBV data to the target size --> this is to pad or crop the %CBV data to the target size
 def np_pad_or_crop_to_square(cbv_data, target_size: int = 112):
     """
     Same as before, but preserves/creates a leading channel dimension.
@@ -481,7 +493,7 @@ def np_pad_or_crop_to_square(cbv_data, target_size: int = 112):
     # Final guaranteed shape: (N, 1, target_size, target_size)
     return data
 
-
+# Function to create the ROI --> this is to create the ROI # not needed for my project
 def create_roi(images, file_idx):
     # Load the first frame from cbv_tensor_dataset
     frame = images[0].squeeze()  # Shape: (height, width) or (channels, height, width)
@@ -522,7 +534,7 @@ def create_roi(images, file_idx):
 
 import numpy as np
 
-
+# Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
 def delta_cbv_roi(images, labels_arr, roi_mask, use_log=False, robust=True):
     """
     Compute %CBV change relative to baseline, using only ROI pixels.
@@ -616,7 +628,7 @@ def delta_cbv_roi(images, labels_arr, roi_mask, use_log=False, robust=True):
 
     return cbv_data, labels_filtered
 
-
+# Function to normalize the %CBV data using only ROI pixels --> this is to normalize the %CBV data using only ROI pixels
 import numpy as np
 
 def normalize_cbv_in_roi(cbv_data, roi_mask, method="robust", eps=1e-8):
@@ -696,7 +708,7 @@ from scipy.ndimage import uniform_filter
 
 import numpy as np
 from scipy.ndimage import uniform_filter
-
+# Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
 def delta_cbv_roi_adaptive(
     images,
     labels_arr,
@@ -788,7 +800,7 @@ def delta_cbv_roi_adaptive(
 
 import numpy as np
 from scipy.ndimage import convolve
-
+# Function to create the pillbox kernel --> this is to create the pillbox kernel
 def create_pillbox_kernel(radius: int):
     """
     Create a normalized 2D circular (pillbox) kernel.
@@ -804,7 +816,7 @@ def create_pillbox_kernel(radius: int):
     kernel /= kernel.sum()  # normalize
     return kernel  # shape (diameter, diameter)
 
-
+# Function to apply the pillbox filter --> this is to apply the pillbox filter
 def pillbox_filter(data: np.ndarray, radius: int = 2) -> np.ndarray:
     """
     Apply isotropic circular pillbox (uniform disk) smoothing.
@@ -841,7 +853,7 @@ def pillbox_filter(data: np.ndarray, radius: int = 2) -> np.ndarray:
 
 import numpy as np
 from sklearn.decomposition import PCA
-
+# Function to perform PCA-based denoising --> this is to perform PCA-based denoising
 def pca_denoise(images, n_components=None, var_keep=0.70):
     """
     Perform PCA-based denoising on a 3D array (T, H, W).
@@ -893,7 +905,7 @@ def pca_denoise(images, n_components=None, var_keep=0.70):
     images_denoised = X_rec.reshape(T, H, W)
 
     return images_denoised, pca
-
+# Function to get the ROI mask --> this is to get the ROI mask
 def get_or_create_roi_mask(images, file_idx):
     """
     Returns the ROI mask for a given acquisition.
