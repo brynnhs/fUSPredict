@@ -11,8 +11,195 @@ from scipy import signal
 import random
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.path import Path
+from matplotlib.path import Path as MatplotlibPath
+from pathlib import Path
+"""
+Author: Brynn Harris-Shanks, 2026
+"""
+# Function to extract and save the baseline frames --> for fUS Predict baseline
+def extract_baseline_frames_from_mat(mat_dict):
+    """
+    Extract frames from .mat file structure.
+    Handles both 'Data' and 'Datas' keys.
+    Returns frames in [T, H, W] format.
+    """
+    key = "Data" if "Data" in mat_dict else ("Datas" if "Datas" in mat_dict else None)
+    if key is None:
+        raise KeyError("Neither 'Data' nor 'Datas' found in .mat file")
 
+    try:
+        fus_struct = mat_dict[key]["fus"][0, 0]
+        frames = fus_struct["frame"][0, 0]
+    except Exception as e:
+        raise KeyError("Failed to access mat[key]['fus'][0,0]['frame'][0,0]") from e
+
+    frames = np.asarray(frames)
+    
+    # Normalize to [T, H, W]
+    # Heuristic: if last dim is the largest, assume [H, W, T]
+    if frames.ndim == 3:
+        if frames.shape[2] > frames.shape[0] and frames.shape[2] > frames.shape[1]:
+            frames = np.transpose(frames, (2, 0, 1))
+    
+    return frames
+
+def load_label_file(label_path):
+    """Load labels from Label_pauses_*.mat file"""
+    lab = scipy.io.loadmat(label_path)
+    labels = lab['Datas']['Label'][0, 0]
+    labels_arr = np.asarray(labels).squeeze()
+    return labels_arr
+
+def extract_and_save_baseline(fus_path, label_path, output_dir):
+    """
+    Extract baseline frames from a session and save as .npz
+    Uses mismatch() to align frames and labels.
+    
+    Args:
+        fus_path: Path to Datas_Se*.mat file
+        label_path: Path to Label_pauses_Se*.mat file
+        output_dir: Directory to save baseline .npz files
+    
+    Returns:
+        Path to saved baseline file, or None if error
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # Extract date code for naming
+    stem = Path(fus_path).stem  # e.g., "Datas_Se01072020"
+    date_code = stem.replace("Datas_", "")
+    baseline_output_path = os.path.join(output_dir, f"baseline_{date_code}.npz")
+    
+    # Skip if already exists
+    if os.path.exists(baseline_output_path):
+        print(f"⏭️  Skipping {date_code} (already exists)")
+        return baseline_output_path
+    
+    try:
+        # Load frames
+        mat = scipy.io.loadmat(fus_path)
+        frames = extract_baseline_frames_from_mat(mat)
+        
+        # Load labels
+        labels_arr = load_label_file(label_path)
+        
+        # Use helper function to align frames and labels
+        frames, labels_arr = mismatch(frames, labels_arr)
+        
+        # Extract baseline frames
+        baseline_mask = (labels_arr == -1)
+        baseline_frames = frames[baseline_mask]  # Shape: (T_baseline, H, W)
+        baseline_indices = np.where(baseline_mask)[0]  # Original frame indices
+        
+        if len(baseline_frames) == 0:
+            print(f"⚠️  Session {date_code}: No baseline frames found (label == -1)")
+            return None
+        
+        print(f"✅ Session {date_code}: {len(baseline_frames)}/{len(frames)} frames are baseline "
+              f"({len(baseline_frames)/len(frames)*100:.1f}%)")
+        
+        # Save baseline data with metadata
+        np.savez_compressed(
+            baseline_output_path,
+            frames=baseline_frames.astype(np.float32),  # Save as float32 to save space
+            original_indices=baseline_indices,  # Which frames in original file were baseline
+            session_id=date_code,
+            source_fus_file=os.path.basename(fus_path),
+            source_label_file=os.path.basename(label_path),
+            n_total_frames=len(frames),
+            n_baseline_frames=len(baseline_frames),
+            spatial_shape=baseline_frames.shape[1:],  # (H, W)
+            dtype=str(baseline_frames.dtype)
+        )
+        
+        return baseline_output_path
+        
+    except Exception as e:
+        print(f"❌ Error processing {os.path.basename(fus_path)}: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
+
+def process_all_baseline_files(data_directory, output_dir):
+    """
+    Extract baseline from all sessions.
+    
+    Args:
+        data_directory: Directory containing Datas_*.mat and Label_pauses_*.mat files
+        output_dir: Directory to save baseline .npz files
+    
+    Returns:
+        List of paths to saved baseline files
+    """
+    # Find all fUS files
+    fus_files = sorted(glob.glob(os.path.join(data_directory, "Datas_*.mat")))
+    
+    if len(fus_files) == 0:
+        print(f"⚠️  No Datas_*.mat files found in {data_directory}")
+        return []
+    
+    print(f"Found {len(fus_files)} fUS files to process\n")
+    
+    baseline_files = []
+    for fus_path in fus_files:
+        # Find matching label file
+        stem = Path(fus_path).stem
+        date_code = stem.replace("Datas_", "")
+        label_path = os.path.join(data_directory, f"Label_pauses_{date_code}.mat")
+        
+        if not os.path.exists(label_path):
+            print(f"⚠️  No label file for {os.path.basename(fus_path)}")
+            continue
+        
+        baseline_path = extract_and_save_baseline(fus_path, label_path, output_dir)
+        if baseline_path:
+            baseline_files.append(baseline_path)
+    
+    print(f"\n✅ Extracted baseline from {len(baseline_files)}/{len(fus_files)} sessions")
+    return baseline_files
+
+def load_baseline_session(baseline_path):
+    """
+    Load a single session's baseline data.
+    
+    Returns:
+        dict with 'frames' (T, H, W) and metadata
+    """
+    data = np.load(baseline_path, allow_pickle=True)
+    return {
+        'frames': data['frames'],  # (T, H, W)
+        'session_id': str(data['session_id']),
+        'original_indices': data['original_indices'],
+        'metadata': {k: data[k] for k in data.files if k not in ['frames', 'original_indices', 'session_id']}
+    }
+
+def load_all_baseline(baseline_dir):
+    """
+    Load all baseline sessions.
+    
+    Returns:
+        List of dicts, each containing a session's baseline data
+    """
+    baseline_files = sorted(glob.glob(os.path.join(baseline_dir, "baseline_*.npz")))
+    
+    if len(baseline_files) == 0:
+        print(f"⚠️  No baseline_*.npz files found in {baseline_dir}")
+        return []
+    
+    all_sessions = []
+    for path in baseline_files:
+        try:
+            session_data = load_baseline_session(path)
+            all_sessions.append(session_data)
+        except Exception as e:
+            print(f"❌ Error loading {os.path.basename(path)}: {e}")
+    
+    print(f"✅ Loaded {len(all_sessions)} baseline sessions")
+    return all_sessions
+
+"""
+Author: Leo Sperber, 2025
+"""
 # Function to handle mismatch between images and labels --> counts # of frames and labels and makes them the same length
 def mismatch(images, labels_arr):
     # Handle mismatch: Shave to the minimum length instead of discarding
