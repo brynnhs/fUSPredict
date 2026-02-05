@@ -1,6 +1,3 @@
-"""
-Author: Leo Sperber, 2025
-"""
 import scipy.io
 import numpy as np
 import torch
