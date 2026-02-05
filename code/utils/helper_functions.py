@@ -155,7 +155,7 @@ def process_all_baseline_files(data_directory, output_dir):
         if baseline_path:
             baseline_files.append(baseline_path)
     
-    print(f"\n✅ Extracted baseline from {len(baseline_files)}/{len(fus_files)} sessions")
+    print(f"\n Extracted baseline from {len(baseline_files)}/{len(fus_files)} sessions")
     return baseline_files
 
 def load_baseline_session(baseline_path):
@@ -196,6 +196,116 @@ def load_all_baseline(baseline_dir):
     
     print(f"✅ Loaded {len(all_sessions)} baseline sessions")
     return all_sessions
+# Function to plot raw fUS intensity over time with label shading
+def plot_fus_timecourse_with_labels(
+    fus_path_or_dir,
+    label_path_or_dir=None,
+    label_colors=None,
+    alpha=0.15,
+    sessions=None
+):
+    """
+    Plot raw fUS timecourse(s) with behavioral label shading.
+
+    Accepted usage:
+    1) Single session file paths:
+       plot_fus_timecourse_with_labels(".../Datas_SeXXXX.mat", ".../Label_pauses_SeXXXX.mat")
+    2) Whole folder (labels in same folder):
+       plot_fus_timecourse_with_labels(data_directory)
+       plot_fus_timecourse_with_labels(data_directory, data_directory)
+
+    Session selection (directory mode):
+       - sessions=None or sessions="all": plot all matched sessions
+       - sessions="Se01072020": plot one session
+       - sessions=["Se01072020", "Se02072020"]: plot selected sessions
+    """
+    if label_colors is None:
+        label_colors = {-1: 'lightblue', 0: 'red', 1: 'lightgreen'}
+
+    # Case 1: folder input -> find and match sessions
+    if os.path.isdir(fus_path_or_dir):
+        fus_dir = fus_path_or_dir
+        label_dir = label_path_or_dir if label_path_or_dir is not None else fus_dir
+
+        fus_files = sorted(glob.glob(os.path.join(fus_dir, "Datas_*.mat")))
+        if len(fus_files) == 0:
+            raise FileNotFoundError(f"No Datas_*.mat files found in: {fus_dir}")
+
+        matched_sessions = []
+        for fus_path in fus_files:
+            session_id = Path(fus_path).stem.replace("Datas_", "")
+            label_path = os.path.join(label_dir, f"Label_pauses_{session_id}.mat")
+
+            if not os.path.exists(label_path):
+                fallback = sorted(glob.glob(os.path.join(label_dir, f"Label*{session_id}.mat")))
+                if len(fallback) > 0:
+                    label_path = fallback[0]
+
+            if os.path.exists(label_path):
+                matched_sessions.append((fus_path, label_path))
+            else:
+                print(f"Warning: missing label file for {os.path.basename(fus_path)}")
+
+        if len(matched_sessions) == 0:
+            raise FileNotFoundError(f"No matching label files found in: {label_dir}")
+
+        # Select which sessions to plot
+        if sessions is None or sessions == "all":
+            selected_sessions = matched_sessions
+        else:
+            if isinstance(sessions, str):
+                requested_ids = {sessions}
+            elif isinstance(sessions, (list, tuple, set, np.ndarray)):
+                requested_ids = {str(s) for s in sessions}
+            else:
+                raise ValueError(
+                    "sessions must be None, 'all', a session string, or a list/tuple/set of session strings."
+                )
+
+            selected_sessions = [
+                (fus_path, label_path)
+                for fus_path, label_path in matched_sessions
+                if Path(fus_path).stem.replace("Datas_", "") in requested_ids
+            ]
+
+            found_ids = {
+                Path(fus_path).stem.replace("Datas_", "")
+                for fus_path, _ in selected_sessions
+            }
+            missing_ids = requested_ids - found_ids
+            for missing in sorted(missing_ids):
+                print(f"Warning: requested session not found: {missing}")
+
+            if len(selected_sessions) == 0:
+                raise FileNotFoundError("None of the requested sessions were found.")
+
+    # Case 2: direct file input
+    else:
+        if label_path_or_dir is None:
+            raise ValueError(
+                "When fus_path_or_dir is a file, label_path_or_dir must be the label file path."
+            )
+        selected_sessions = [(fus_path_or_dir, label_path_or_dir)]
+
+    # Plot each selected session
+    for fus_path, label_path in selected_sessions:
+        mat = scipy.io.loadmat(fus_path)
+        frames = extract_baseline_frames_from_mat(mat)
+        labels_arr = load_label_file(label_path)
+        frames, labels_arr = mismatch(frames, labels_arr)
+
+        fus_ts = frames.reshape(frames.shape[0], -1).mean(axis=1)
+        session_name = Path(fus_path).stem.replace("Datas_", "")
+
+        fig, ax = plt.subplots(1, 1, figsize=(12, 5), constrained_layout=True)
+        add_label_shading(ax, labels_arr, label_colors, alpha=alpha)
+        ax.plot(fus_ts, color='tab:blue', lw=1.0, label='Raw fUS mean intensity')
+        ax.set_title(f"Raw fUS Timecourse - {session_name}")
+        ax.set_xlabel('Frame')
+        ax.set_ylabel('Raw fUS intensity (a.u.)')
+        ax.legend(loc='upper right')
+        ax.grid(alpha=0.3)
+        plt.show()
 
 """
 Author: Leo Sperber, 2025
@@ -1111,3 +1221,5 @@ def get_or_create_roi_mask(images, file_idx):
         print(f"Mask created and loaded → {mask_path}")
     
     return mask
+
+
