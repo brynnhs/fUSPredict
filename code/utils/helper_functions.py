@@ -216,6 +216,7 @@ def plot_fus_timecourse_with_labels(
 
     Session selection (directory mode):
        - sessions=None or sessions="all": plot all matched sessions
+       - sessions="first": plot only the first matched session
        - sessions="Se01072020": plot one session
        - sessions=["Se01072020", "Se02072020"]: plot selected sessions
     """
@@ -253,13 +254,15 @@ def plot_fus_timecourse_with_labels(
         if sessions is None or sessions == "all":
             selected_sessions = matched_sessions
         else:
-            if isinstance(sessions, str):
+            if sessions == "first":
+                requested_ids = {Path(matched_sessions[0][0]).stem.replace("Datas_", "")}
+            elif isinstance(sessions, str):
                 requested_ids = {sessions}
             elif isinstance(sessions, (list, tuple, set, np.ndarray)):
                 requested_ids = {str(s) for s in sessions}
             else:
                 raise ValueError(
-                    "sessions must be None, 'all', a session string, or a list/tuple/set of session strings."
+                    "sessions must be None, 'all', 'first', a session string, or a list/tuple/set of session strings."
                 )
 
             selected_sessions = [
