@@ -739,7 +739,7 @@ import numpy as np
 
 import numpy as np
 # Function to pad or crop the %CBV data to the target size --> this is to pad or crop the %CBV data to the target size
-def np_pad_or_crop_to_square(cbv_data, target_size: int = 112):
+def np_pad_or_crop_to_square(cbv_data, target_size: int = 112, verbose=False):
     """
     Same as before, but preserves/creates a leading channel dimension.
     
@@ -786,7 +786,8 @@ def np_pad_or_crop_to_square(cbv_data, target_size: int = 112):
         data = np.pad(data, pad_width, mode='constant', constant_values=0)
     elif current_w > target:
         data = data[:, :, :, :target]
-    print("Function pad shape: ", np.shape(data))
+    if verbose:
+        print(f"After pad/crop: {data.shape} (H={data.shape[2]}, W={data.shape[3]})")
     # Final guaranteed shape: (N, 1, target_size, target_size)
     return data
 
