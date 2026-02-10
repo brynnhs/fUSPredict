@@ -1,0 +1,19 @@
+# Core scientific stack
+numpy
+scipy
+pandas
+matplotlib
+
+# ML / CV
+torch
+torchvision
+scikit-learn
+scikit-image
+opencv-python
+statsmodels
+
+
+# Modeling / utilities
+tqdm
+seaborn
+transformers

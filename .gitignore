@@ -1,3 +1,5 @@
 /sourcedata
 /derivatives
 /__pycache__
+*.npz
+*.pyc
