@@ -82,31 +82,55 @@ def sample_train_frames_for_pca_per_acq(train_ds, max_frames, seed):
     return np.stack(frames, axis=0)
 
 
-def compute_frame_metrics(y_true, y_pred):
+def compute_frame_metrics(y_true, y_pred, standardize=False, eps=1e-8, decimals=3):
     """
     Compute framewise metrics across pixels.
+    If standardize is True, z-score both y_true and y_pred using y_true stats.
     """
     yt = np.asarray(y_true).squeeze()
     yp = np.asarray(y_pred).squeeze()
     yt = yt.reshape(-1)
     yp = yp.reshape(-1)
+    if bool(standardize):
+        mu = float(yt.mean())
+        sigma = float(yt.std())
+        if sigma < float(eps):
+            sigma = 1.0
+        yt = (yt - mu) / sigma
+        yp = (yp - mu) / sigma
     err = yp - yt
     mse = np.mean(err ** 2)
     rmse = np.sqrt(mse)
     mae = np.mean(np.abs(err))
     denom = np.sum((yt - yt.mean()) ** 2)
     r2 = 1.0 - (np.sum(err ** 2) / denom) if denom > 0 else np.nan
-    return {"MSE": float(mse), "RMSE": float(rmse), "MAE": float(mae), "R2": float(r2)}
+    d = int(decimals)
+    return {
+        "MSE": float(np.round(mse, d)),
+        "RMSE": float(np.round(rmse, d)),
+        "MAE": float(np.round(mae, d)),
+        "R2": float(np.round(r2, d)),
+    }
 
 
-def evaluate_model_on_dataset(predict_fn, test_ds, max_items=None, return_per_window=False):
+def evaluate_model_on_dataset(
+    predict_fn,
+    test_ds,
+    max_items=None,
+    return_per_window=False,
+    standardize=False,
+    decimals=3,
+):
     """
     Evaluate predict_fn on test_ds. Aggregates mean/std of metrics.
+    If standardize is True, each window metric is computed on z-scored targets/predictions.
     """
     per_window = []
     for context, target in iter_windows(test_ds, max_items=max_items):
         pred = predict_fn(context)
-        metrics = compute_frame_metrics(target[0], pred[0])
+        metrics = compute_frame_metrics(
+            target[0], pred[0], standardize=standardize, decimals=decimals
+        )
         per_window.append(metrics)
     if len(per_window) == 0:
         raise RuntimeError("No windows evaluated.")
@@ -114,8 +138,8 @@ def evaluate_model_on_dataset(predict_fn, test_ds, max_items=None, return_per_wi
     agg = {}
     for k in keys:
         vals = np.array([m[k] for m in per_window], dtype=float)
-        agg[f"{k}_mean"] = float(vals.mean())
-        agg[f"{k}_std"] = float(vals.std())
+        agg[f"{k}_mean"] = float(np.round(vals.mean(), int(decimals)))
+        agg[f"{k}_std"] = float(np.round(vals.std(), int(decimals)))
     agg["n_windows"] = len(per_window)
     if return_per_window:
         return agg, per_window
