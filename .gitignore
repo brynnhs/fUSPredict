@@ -3,3 +3,4 @@
 /__pycache__
 *.npz
 *.pyc
+/derivatives/modeling
