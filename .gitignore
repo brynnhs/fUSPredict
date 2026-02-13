@@ -1,6 +1,6 @@
 /sourcedata
 /derivatives
-/__pycache__
-*.npz
-*.pyc
 /derivatives/modeling
+**/__pycache__/
+*.pyc
+*.npz
