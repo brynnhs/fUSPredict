@@ -120,7 +120,7 @@ class FUSForecastWindowDataset(Dataset):
 
     def _build_index_map(self):
         for acq_idx, path in enumerate(self.acq_paths):
-            with np.load(path, allow_pickle=True) as z:
+            with np.load(path, allow_pickle=False) as z:
                 if self.frames_key not in z:
                     raise KeyError(f"{path} missing frames key '{self.frames_key}'")
                 frames = self._normalize_frames(z[self.frames_key], path)
@@ -156,7 +156,7 @@ class FUSForecastWindowDataset(Dataset):
             self._acq_cache[acq_idx] = x
             return x
         path = self.acq_paths[acq_idx]
-        with np.load(path, allow_pickle=True) as z:
+        with np.load(path, allow_pickle=False) as z:
             frames = self._normalize_frames(z[self.frames_key], path)
         _, Cn, Hn, Wn = frames.shape
         if self.expected_chw != (Cn, Hn, Wn):

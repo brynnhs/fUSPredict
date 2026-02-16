@@ -10,6 +10,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.path import Path as MatplotlibPath
 from pathlib import Path
+import math
 """
 Author: Brynn Harris-Shanks, 2026
 """
@@ -39,6 +40,38 @@ def extract_baseline_frames_from_mat(mat_dict):
             frames = np.transpose(frames, (2, 0, 1))
     
     return frames
+
+def extract_fps_from_mat(mat_dict):
+    """
+    Best-effort extraction of acquisition FPS/frame rate from .mat structure.
+    Returns float FPS when found, else None.
+    """
+    key = "Data" if "Data" in mat_dict else ("Datas" if "Datas" in mat_dict else None)
+    if key is None:
+        return None
+
+    try:
+        fus_struct = mat_dict[key]["fus"][0, 0]
+    except Exception:
+        return None
+
+    candidate_keys = ("fps", "frame_rate", "framerate", "sampling_rate", "acq_fps")
+    fus_fields = fus_struct.dtype.names or ()
+
+    for cand in candidate_keys:
+        if cand not in fus_fields:
+            continue
+        try:
+            raw = np.asarray(fus_struct[cand][0, 0]).squeeze()
+            if raw.size == 0:
+                continue
+            val = float(raw)
+            if val > 0:
+                return val
+        except Exception:
+            continue
+
+    return None
 
 def load_label_file(label_path):
     """Load labels from Label_pauses_*.mat file"""
@@ -76,6 +109,7 @@ def extract_and_save_baseline(fus_path, label_path, output_dir):
         # Load frames
         mat = scipy.io.loadmat(fus_path)
         frames = extract_baseline_frames_from_mat(mat)
+        source_fps = extract_fps_from_mat(mat)
         
         # Load labels
         labels_arr = load_label_file(label_path)
@@ -101,6 +135,7 @@ def extract_and_save_baseline(fus_path, label_path, output_dir):
             frames=baseline_frames.astype(np.float32),  # Save as float32 to save space
             original_indices=baseline_indices,  # Which frames in original file were baseline
             session_id=date_code,
+            source_fps=np.nan if source_fps is None else float(source_fps),
             source_fus_file=os.path.basename(fus_path),
             source_label_file=os.path.basename(label_path),
             n_total_frames=len(frames),
@@ -162,7 +197,7 @@ def load_baseline_session(baseline_path):
     Returns:
         dict with 'frames' (T, H, W) and metadata
     """
-    data = np.load(baseline_path, allow_pickle=True)
+    data = np.load(baseline_path, allow_pickle=False)
     return {
         'frames': data['frames'],  # (T, H, W)
         'session_id': str(data['session_id']),
@@ -814,7 +849,7 @@ def create_roi(images, file_idx):
     # Create a closed polygon Path
     # Append first point to close the polygon
     points = np.vstack([points, points[0]])
-    path = Path(points)
+    path = MatplotlibPath(points)
 
     # Generate boolean mask for the ROI
     height, width = frame.shape
@@ -926,77 +961,84 @@ def delta_cbv_roi(images, labels_arr, roi_mask, use_log=False, robust=True):
 
     return cbv_data, labels_filtered
 
-# Function to normalize the %CBV data using only ROI pixels --> this is to normalize the %CBV data using only ROI pixels
+# Function to normalize the %CBV data per pixel over time, using ROI pixels only
 import numpy as np
 
-def normalize_cbv_in_roi(cbv_data, roi_mask, method="robust", eps=1e-8):
+
+def normalize_frames_pixelwise(
+    frames,
+    method="zscore",
+    eps=1e-8,
+    roi_mask=None,
+    floor_percentile=10.0,
+    clip_abs=3.0,
+):
     """
-    Normalize CBV data using statistics computed EXCLUSIVELY from ROI pixels.
-    Pixels outside the ROI remain exactly 0.0 (no change).
-    
+    Normalize raw frames per pixel over time, with robust floors/clipping.
+
     Parameters
     ----------
-    cbv_data : np.ndarray
-        Shape (M, H, W) – ΔCBV frames (float32), with 0s outside ROI
-    roi_mask : np.ndarray bool
-        Shape (H, W) – True inside ROI
+    frames : np.ndarray
+        Shape (T, H, W).
     method : str
-        - "zscore"  → zero-mean, unit-variance (recommended for MAEs/CNNs)
-        - "minmax"  → scale to [0, 1] or [-1, 1] depending on sign
-        - "robust"  → (x - median) / IQR  (very robust to outliers)
+        - "zscore":      (x - mean_t) / std_t per pixel
+        - "mean_divide": (x - mean_t) / mean_t per pixel
     eps : float
-        Small constant to avoid division by zero
-    
+        Small value for numerical stability.
+    roi_mask : np.ndarray or None
+        Optional boolean mask of shape (H, W). If provided, floors are estimated
+        from ROI-only pixels and non-ROI output is set to 0.
+    floor_percentile : float
+        Percentile used to compute robust floors for std/|mean| maps. Helps avoid
+        exploding values in low-signal pixels.
+    clip_abs : float or None
+        If provided, clip normalized values to [-clip_abs, +clip_abs].
+
     Returns
     -------
-    cbv_normalized : np.ndarray
-        Same shape as input, normalized only in ROI, 0 elsewhere
+    np.ndarray
+        Normalized frames, same shape as input, float32.
     """
-    if cbv_data.shape[1:] != roi_mask.shape:
-        raise ValueError(f"cbv_data spatial dims {cbv_data.shape[1:]} != mask {roi_mask.shape}")
+    if frames.ndim != 3:
+        raise ValueError(f"frames must be (T,H,W), got shape {frames.shape}")
 
-    # Extract only ROI pixels across all frames → (M_roi_pixels,)
-    mask = roi_mask.astype(bool)                 # (H, W)
-    roi_values = cbv_data[:, mask]                # ← correct indexing
+    frames = frames.astype(np.float32, copy=False)
+    mean_map = frames.mean(axis=0, keepdims=True)
+    std_map = frames.std(axis=0, keepdims=True)
 
-    if roi_values.size == 0:
-        raise ValueError("ROI mask is empty!")
+    if roi_mask is not None:
+        if roi_mask.shape != frames.shape[1:]:
+            raise ValueError(f"roi_mask shape {roi_mask.shape} != frame spatial shape {frames.shape[1:]}")
+        mask = roi_mask.astype(bool)
+    else:
+        mask = np.ones(frames.shape[1:], dtype=bool)
 
-    cbv_norm = np.zeros_like(cbv_data)
+    # Robust floors from ROI pixels only.
+    std_vals = std_map[0, mask]
+    mean_abs_vals = np.abs(mean_map[0, mask])
+    std_floor = max(float(np.percentile(std_vals, floor_percentile)), float(eps))
+    mean_floor = max(float(np.percentile(mean_abs_vals, floor_percentile)), float(eps))
 
     if method == "zscore":
-        mean = roi_values.mean()
-        std  = roi_values.std()
-        if std < eps:
-            print("Warning: ROI std very small → using min-max fallback")
-            cbv_norm = np.where(mask, (cbv_data - cbv_data.min()) / (cbv_data.max() - cbv_data.min() + eps), 0.0)
-        else:
-            cbv_norm = np.where(mask, (cbv_data - mean) / (std + eps), 0.0)
-
-    elif method == "minmax":
-        vmin, vmax = roi_values.min(), roi_values.max()
-        if (vmax - vmin) < eps:
-            cbv_norm = np.where(mask, 0.0, 0.0)
-        else:
-            cbv_norm = np.where(mask, (cbv_data - vmin) / (vmax - vmin + eps), 0.0)
-
-    elif method == "robust":
-        median = np.median(roi_values)
-        iqr = np.percentile(roi_values, 75) - np.percentile(roi_values, 25)
-        scale = iqr / 1.349  # approximate std for normal dist
-        if scale < eps:
-            scale = 1.0
-        cbv_norm = np.where(mask, (cbv_data - median) / (scale + eps), 0.0)
-
+        denom = np.maximum(std_map, std_floor)
+        norm = (frames - mean_map) / denom
+    elif method == "mean_divide":
+        denom_mag = np.maximum(np.abs(mean_map), mean_floor)
+        denom = np.sign(mean_map) * denom_mag
+        denom = np.where(np.abs(denom) < eps, eps, denom)
+        norm = (frames - mean_map) / denom
     else:
-        raise ValueError("method must be 'zscore', 'minmax', or 'robust'")
+        raise ValueError("method must be 'zscore' or 'mean_divide'")
 
-    print(f"ROI normalization ({method}): "
-          f"mean={roi_values.mean():.4f}, std={roi_values.std():.4f}, "
-          f"min={roi_values.min():.3f}, max={roi_values.max():.3f}")
+    if clip_abs is not None:
+        c = float(clip_abs)
+        if c > 0:
+            norm = np.clip(norm, -c, c)
 
+    if roi_mask is not None:
+        norm[:, ~mask] = 0.0
 
-    return cbv_norm.astype(np.float32)
+    return norm.astype(np.float32, copy=False)
 
 
 
