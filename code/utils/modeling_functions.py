@@ -89,6 +89,13 @@ def compute_frame_metrics(y_true, y_pred, standardize=False, eps=1e-8, decimals=
     """
     yt = np.asarray(y_true).squeeze()
     yp = np.asarray(y_pred).squeeze()
+    if np.issubdtype(yt.dtype, np.integer) or np.issubdtype(yp.dtype, np.integer):
+        warnings.warn(
+            "compute_frame_metrics received integer inputs; metrics should be computed on float-space arrays.",
+            RuntimeWarning,
+        )
+    yt = yt.astype(np.float32, copy=False)
+    yp = yp.astype(np.float32, copy=False)
     yt = yt.reshape(-1)
     yp = yp.reshape(-1)
     if bool(standardize):

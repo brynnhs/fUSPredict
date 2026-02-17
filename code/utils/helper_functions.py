@@ -5,9 +5,11 @@ import torch.nn.functional as F
 import os
 import glob
 from scipy import signal
+from scipy import ndimage as ndi
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib
 from matplotlib.path import Path as MatplotlibPath
 from pathlib import Path
 import math
@@ -838,10 +840,34 @@ def create_roi(images, file_idx):
     ax.imshow(frame, cmap='gray')  # Use grayscale colormap; adjust if needed
     ax.set_title('Click points to define ROI (right-click or Enter to finish)')
 
+    # If backend is non-interactive (e.g. Agg), ginput cannot capture clicks.
+    # Fallback: save an all-True mask so downstream code can run.
+    backend = matplotlib.get_backend().lower() if hasattr(matplotlib, "get_backend") else ""
+    if "agg" in backend:
+        height, width = frame.shape
+        mask = np.ones((height, width), dtype=bool)
+        np.save(f'roi_{file_idx}.npy', mask)
+        plt.close(fig)
+        print(
+            f"Non-interactive backend detected ({backend}); "
+            f"saved full-frame ROI mask to roi_{file_idx}.npy"
+        )
+        return mask
+
     # Collect points interactively
     print("Click points to define the ROI. Right-click or press Enter to close the polygon.")
+    # Ensure the canvas is shown for interactive backends (notebook inline often needs this draw/pause).
+    plt.show(block=False)
+    plt.pause(0.1)
     points = plt.ginput(n=-1, timeout=-1, show_clicks=True)  # n=-1 allows unlimited points; timeout=-1 waits indefinitely
     plt.close()  # Close the plot after selection
+
+    if points is None or len(points) < 3:
+        raise RuntimeError(
+            "ROI selection did not capture enough points. "
+            "Use an interactive matplotlib backend (e.g. `%matplotlib qt` or `%matplotlib widget`) "
+            "and click at least 3 points."
+        )
 
     # Convert points to numpy array
     points = np.array(points)  # Shape: (num_points, 2) for (x, y) coordinates
@@ -863,6 +889,53 @@ def create_roi(images, file_idx):
     # mask is a boolean numpy array: True inside ROI, False outside
     # You can save it or apply it to your tensor dataset
     np.save(f'roi_{file_idx}.npy', mask)  # Save for later use
+    return mask
+
+def create_roi_auto(images, file_idx, percentile=35.0, min_pixels=500):
+    """
+    Create ROI mask automatically from frame intensity (non-interactive).
+    Strategy:
+      1) Compute temporal mean image
+      2) Threshold by percentile
+      3) Keep largest connected component when possible
+    """
+    arr = np.asarray(images)
+    if arr.ndim == 4:  # (T, C, H, W)
+        arr = arr[:, 0, :, :]
+    if arr.ndim != 3:
+        raise ValueError(f"Expected images shape (T,H,W) or (T,1,H,W), got {arr.shape}")
+
+    mean_map = np.nanmean(arr.astype(np.float32), axis=0)  # (H, W)
+    finite_vals = mean_map[np.isfinite(mean_map)]
+
+    if finite_vals.size == 0:
+        mask = np.ones(mean_map.shape, dtype=bool)
+    else:
+        pos_vals = finite_vals[finite_vals > 0]
+        ref_vals = pos_vals if pos_vals.size > 0 else finite_vals
+        thr = np.percentile(ref_vals, percentile)
+        mask = mean_map >= thr
+
+        # Clean: keep largest connected component if any foreground exists.
+        labels, nlab = ndi.label(mask)
+        if nlab > 0:
+            counts = np.bincount(labels.ravel())
+            if counts.size > 1:
+                counts[0] = 0
+                largest = int(np.argmax(counts))
+                if counts[largest] >= min_pixels:
+                    mask = labels == largest
+
+        # Safety fallback if mask collapses.
+        if int(mask.sum()) < max(1, min_pixels // 4):
+            mask = np.ones(mean_map.shape, dtype=bool)
+
+    np.save(f'roi_{file_idx}.npy', mask.astype(bool))
+    print(
+        f"Auto ROI created for {file_idx} | shape={mask.shape} | "
+        f"pixels={int(mask.sum())} ({100.0 * float(mask.mean()):.1f}%)"
+    )
+    return mask
 
 
 import numpy as np
@@ -1246,7 +1319,7 @@ def pca_denoise(images, n_components=None, var_keep=0.70):
 
     return images_denoised, pca
 # Function to get the ROI mask --> this is to get the ROI mask
-def get_or_create_roi_mask(images, file_idx):
+def get_or_create_roi_mask(images, file_idx, force_auto=False, auto_percentile=35.0, min_pixels=500):
     """
     Returns the ROI mask for a given acquisition.
     - If roi_{file_idx}.npy already exists → loads it
@@ -1258,11 +1331,28 @@ def get_or_create_roi_mask(images, file_idx):
         print(f"ROI mask found → loading {mask_path}")
         mask = np.load(mask_path)
     else:
-        print(f"No ROI mask found → starting interactive drawing for acquisition {file_idx}")
-        create_roi(images, file_idx)          # this saves the .npy file
-        mask = np.load(mask_path)
+        backend = matplotlib.get_backend().lower() if hasattr(matplotlib, "get_backend") else ""
+        non_interactive = ("agg" in backend) or ("inline" in backend)
+
+        if force_auto or non_interactive:
+            print(
+                f"No ROI mask found → using automatic ROI creation for acquisition {file_idx} "
+                f"(backend={backend})"
+            )
+            mask = create_roi_auto(
+                images,
+                file_idx,
+                percentile=auto_percentile,
+                min_pixels=min_pixels,
+            )
+        else:
+            print(f"No ROI mask found → starting interactive drawing for acquisition {file_idx}")
+            mask = create_roi(images, file_idx)   # saves and returns mask
+
+        if mask is None:
+            mask = np.load(mask_path)
         print(f"Mask created and loaded → {mask_path}")
-    
+
     return mask
 
 
