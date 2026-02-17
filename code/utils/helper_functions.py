@@ -16,6 +16,44 @@ import math
 """
 Author: Brynn Harris-Shanks, 2026
 """
+def load_saved_baseline_sessions(base_dir):
+    sessions = []
+    for p in sorted(Path(base_dir).glob("baseline_*.npz")):
+        try:
+            d = np.load(p, allow_pickle=False)
+            sess = {
+                "frames": d["frames"].astype(np.float32, copy=False),
+                "session_id": str(d["session_id"]),
+                "original_indices": d["original_indices"] if "original_indices" in d.files else None,
+                "metadata": {k: d[k] for k in d.files if k not in ["frames", "session_id", "original_indices"]},
+            }
+            sessions.append(sess)
+        except Exception as e:
+            print(f"Error loading {p.name}: {e}")
+    return sessions
+
+def get_baseline_dir(deriv_root, subject, mode):
+    if mode == "raw":
+        return Path(deriv_root) / subject / "baseline_only"
+    return Path(deriv_root) / subject / "baseline_only_normalized" / mode
+
+def load_saved_session_frames(deriv_root, subject, session_id, mode):
+    base_dir = get_baseline_dir(deriv_root, subject, mode)
+    if mode == "raw":
+        fp = base_dir / f"baseline_{session_id}.npz"
+    else:
+        fp = base_dir / f"baseline_{session_id}_{mode}.npz"
+
+    if not fp.exists():
+        raise FileNotFoundError(
+            f"Missing saved baseline file for subject={subject}, session={session_id}, mode={mode}: {fp}"
+        )
+
+    with np.load(fp, allow_pickle=False) as data:
+        if "frames" not in data.files:
+            raise KeyError(f"'frames' missing in {fp}")
+        return data["frames"].astype(np.float32, copy=False)
+    
 # Function to extract and save the baseline frames --> for fUS Predict baseline
 def extract_baseline_frames_from_mat(mat_dict):
     """
