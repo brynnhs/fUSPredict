@@ -1,18 +1,18 @@
-import scipy.io
+import glob
+import os
+import random
+from pathlib import Path
+
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
+import scipy.io
 import torch
 import torch.nn.functional as F
-import os
-import glob
-from scipy import signal
-from scipy import ndimage as ndi
-import random
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
 from matplotlib.path import Path as MatplotlibPath
-from pathlib import Path
-import math
+from scipy import ndimage as ndi
+from scipy import signal
+
 """
 Author: Brynn Harris-Shanks, 2026
 """
@@ -501,7 +501,6 @@ def acq_wise_split(big_acquisition_indices,seed=42,split=0.8):
     test_mask = torch.isin(big_acquisition_indices, torch.tensor(test_acqs))
     return train_mask, test_mask
 
-import torch
 
 # Function to split the data into train and test sets --> this is to split the data into train and test sets
 def mid_split_whole(big_acquisition_indices, split=0.8):
@@ -750,8 +749,6 @@ def frame_diff(images: np.ndarray, mode: str = "window", window: int = 8) -> np.
     return diff
 
 
-import torch
-import torch.nn.functional as F
 # Function to pad or crop the %CBV data to the target size --> this is to pad or crop the %CBV data to the target size
 def tensor_pad_or_crop(cbv_data, target_size: int = 112):
     """
@@ -812,7 +809,7 @@ def tensor_pad_or_crop(cbv_data, target_size: int = 112):
 
 import numpy as np
 
-import numpy as np
+
 # Function to pad or crop the %CBV data to the target size --> this is to pad or crop the %CBV data to the target size
 def np_pad_or_crop_to_square(cbv_data, target_size: int = 112, verbose=False):
     """
@@ -977,6 +974,7 @@ def create_roi_auto(images, file_idx, percentile=35.0, min_pixels=500):
 
 
 import numpy as np
+
 
 # Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
 def delta_cbv_roi(images, labels_arr, roi_mask, use_log=False, robust=True):
@@ -1154,11 +1152,8 @@ def normalize_frames_pixelwise(
 
 
 import numpy as np
-from scipy.ndimage import uniform_filter
 
 
-import numpy as np
-from scipy.ndimage import uniform_filter
 # Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
 def delta_cbv_roi_adaptive(
     images,
@@ -1251,6 +1246,8 @@ def delta_cbv_roi_adaptive(
 
 import numpy as np
 from scipy.ndimage import convolve
+
+
 # Function to create the pillbox kernel --> this is to create the pillbox kernel
 def create_pillbox_kernel(radius: int):
     """
@@ -1304,6 +1301,8 @@ def pillbox_filter(data: np.ndarray, radius: int = 2) -> np.ndarray:
 
 import numpy as np
 from sklearn.decomposition import PCA
+
+
 # Function to perform PCA-based denoising --> this is to perform PCA-based denoising
 def pca_denoise(images, n_components=None, var_keep=0.70):
     """

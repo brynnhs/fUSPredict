@@ -1,12 +1,11 @@
-from collections import OrderedDict
 import json
 import os
+from collections import OrderedDict
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-
 from utils import helper_functions as hf
 
 
@@ -66,7 +65,7 @@ class FUSForecastWindowDataset(Dataset):
     def _resolve_inputs(self, manifest_path, acq_paths, split):
         path_to_subject = {}
         if manifest_path is not None:
-            with open(manifest_path, "r", encoding="utf-8") as f:
+            with open(manifest_path, encoding="utf-8") as f:
                 m = json.load(f)
             # Optional metadata map: meta[path] -> {subject: ...}
             meta = m.get("meta", {})
