@@ -1,24 +1,21 @@
+--extra-index-url https://download.pytorch.org/whl/nightly/cu128
+
 # Core scientific stack
 numpy
 scipy
 pandas
 matplotlib
 
-# ML / CV
-torch
-torchvision
-scikit-learn
-scikit-image
-opencv-python
-statsmodels
-
-
-# Modeling / utilities
-tqdm
-seaborn
-transformers
-
---extra-index-url https://download.pytorch.org/whl/nightly/cu128
+# PyTorch nightly (required)
 torch==2.11.0.dev20260210+cu128
 torchaudio==2.11.0.dev20260210+cu128
 torchvision==0.26.0.dev20260209+cu128
+
+# ML / stats / CV
+scikit-learn
+opencv-python
+statsmodels
+
+# Notebook/runtime utilities
+ipython
+seaborn
