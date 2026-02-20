@@ -16,6 +16,15 @@ from scipy import signal
 """
 Author: Brynn Harris-Shanks, 2026
 """
+
+def squeeze_frames(frames):
+    arr = np.asarray(frames)
+    if arr.ndim == 3:
+        return arr
+    if arr.ndim == 4 and arr.shape[1] == 1:
+        return arr[:, 0, :, :]
+    raise ValueError(f"Unsupported frame shape: {arr.shape}; expected [T,H,W] or [T,1,H,W]")
+
 def load_saved_baseline_sessions(base_dir):
     sessions = []
     for p in sorted(Path(base_dir).glob("baseline_*.npz")):

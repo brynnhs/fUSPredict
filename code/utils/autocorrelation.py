@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from pathlib import Path
 from utils import helper_functions as hf
 
 deriv_root = None
@@ -47,21 +48,33 @@ def canonical_session_id(value, known_modes):
             break
     return s
 
-def squeeze_frames(frames):
-    arr = np.asarray(frames)
-    if arr.ndim == 3:
-        return arr
-    if arr.ndim == 4 and arr.shape[1] == 1:
-        return arr[:, 0, :, :]
-    raise ValueError(f"Unsupported frame shape: {arr.shape}; expected [T,H,W] or [T,1,H,W]")
+
+def _autodetect_deriv_root():
+    cwd = Path.cwd().resolve()
+    for base in [cwd, *cwd.parents]:
+        candidate = base / "derivatives" / "preprocessing"
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _ensure_deriv_root_or_raise():
+    global deriv_root
+    if deriv_root is None:
+        detected = _autodetect_deriv_root()
+        if detected is not None:
+            deriv_root = detected
+        else:
+            raise RuntimeError(
+                "autocorrelation.deriv_root is not configured. "
+                "Call autocorrelation.configure(deriv_root_path=...) first."
+            )
+    return deriv_root
+
 
 def analysis_subject_root(subject, subdir):
-    if deriv_root is None:
-        raise RuntimeError(
-            "autocorrelation.deriv_root is not configured. "
-            "Call autocorrelation.configure(deriv_root_path=...) first."
-        )
-    root = deriv_root / subject / EDA_ROOT_NAME / subdir
+    root_base = _ensure_deriv_root_or_raise()
+    root = root_base / subject / EDA_ROOT_NAME / subdir
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -83,7 +96,7 @@ def load_saved_session_bundle(deriv_root, subject, session_id, mode):
             raise KeyError(f"'frames' missing in {fp}")
         frames = np.asarray(data["frames"], dtype=np.float32)
         metadata = {k: data[k] for k in data.files if k != "frames"}
-    return squeeze_frames(frames).astype(np.float32, copy=False), metadata, fp
+    return hf.squeeze_frames(frames).astype(np.float32, copy=False), metadata, fp
 
 
 def finite_values(a):
@@ -146,12 +159,8 @@ def normalized_acf(x, max_lag):
 
 
 def load_acf_qc_map_for_subject(subject):
-    if deriv_root is None:
-        raise RuntimeError(
-            "autocorrelation.deriv_root is not configured. "
-            "Call autocorrelation.configure(deriv_root_path=...) first."
-        )
-    qc_path = deriv_root / subject / ACF_QC_FILENAME
+    root_base = _ensure_deriv_root_or_raise()
+    qc_path = root_base / subject / ACF_QC_FILENAME
     if not qc_path.exists():
         return {}
 
@@ -243,6 +252,88 @@ def safe_temporal_corr_map(A, B, eps=SPATIAL_EPS, min_samples=SPATIAL_MIN_VALID_
     finite_corr = np.isfinite(corr)
     corr[finite_corr] = np.clip(corr[finite_corr], -1.0, 1.0)
     return corr, n_valid
+
+
+def seed_patch_mask(shape_hw, seed_center_yx, seed_radius=0):
+    shape = tuple(int(v) for v in shape_hw)
+    if len(shape) != 2:
+        raise ValueError(f"shape_hw must be (H, W), got {shape_hw!r}")
+    H, W = shape
+    if H <= 0 or W <= 0:
+        raise ValueError(f"shape_hw must be positive, got {shape}")
+
+    if seed_center_yx is None or len(seed_center_yx) != 2:
+        raise ValueError(
+            f"seed_center_yx must be a 2-item sequence (y, x), got {seed_center_yx!r}"
+        )
+    y = int(seed_center_yx[0])
+    x = int(seed_center_yx[1])
+
+    r = int(seed_radius)
+    if r < 0:
+        raise ValueError(f"seed_radius must be >= 0, got {seed_radius!r}")
+    if not (0 <= y < H and 0 <= x < W):
+        raise ValueError(
+            f"seed center {(y, x)} out of bounds for shape {(H, W)}"
+        )
+
+    y0 = max(0, y - r)
+    y1 = min(H, y + r + 1)
+    x0 = max(0, x - r)
+    x1 = min(W, x + r + 1)
+    if y1 <= y0 or x1 <= x0:
+        raise ValueError(
+            f"seed patch is empty for center {(y, x)}, radius={r}, shape={(H, W)}"
+        )
+
+    mask = np.zeros((H, W), dtype=bool)
+    mask[y0:y1, x0:x1] = True
+    if not np.any(mask):
+        raise ValueError(
+            f"seed patch is empty for center {(y, x)}, radius={r}, shape={(H, W)}"
+        )
+    return mask
+
+
+def seed_temporal_corr_map(
+    frames_3d,
+    seed_center_yx,
+    seed_radius=0,
+    eps=SPATIAL_EPS,
+    min_samples=SPATIAL_MIN_VALID_SAMPLES,
+):
+    arr = np.asarray(frames_3d, dtype=np.float32)
+    if arr.ndim != 3:
+        raise ValueError(f"Expected [T,H,W], got shape {arr.shape}")
+    if arr.shape[0] < 2:
+        raise ValueError(f"Not enough frames for seed correlation: T={arr.shape[0]}")
+
+    T, H, W = arr.shape
+    mask = seed_patch_mask((H, W), seed_center_yx, seed_radius=seed_radius)
+    seed_vals = arr[:, mask]
+    seed_ts = np.nanmean(seed_vals, axis=1).astype(np.float64)
+    finite_seed = np.isfinite(seed_ts)
+    n_finite_seed = int(np.sum(finite_seed))
+    if n_finite_seed < max(2, int(min_samples)):
+        raise ValueError(
+            f"Seed trace has insufficient finite samples: {n_finite_seed} "
+            f"(min required {max(2, int(min_samples))})"
+        )
+
+    seed_var = float(np.var(seed_ts[finite_seed]))
+    if (not np.isfinite(seed_var)) or seed_var <= float(eps):
+        raise ValueError(
+            f"Seed trace is near-constant or invalid (variance={seed_var})"
+        )
+
+    seed_3d = np.broadcast_to(seed_ts.reshape(T, 1, 1), arr.shape)
+    corr_map, n_valid = safe_temporal_corr_map(
+        arr,
+        seed_3d,
+        eps=eps,
+        min_samples=min_samples,
+    )
+    return corr_map, n_valid, seed_ts, mask
 
 
 def spatial_autocorr_map(frames_3d, neighborhood=4, eps=SPATIAL_EPS, min_samples=SPATIAL_MIN_VALID_SAMPLES):
