@@ -1,7 +1,7 @@
 import warnings
 
 import numpy as np
-import torch
+
 
 def _to_numpy(x):
     if hasattr(x, "detach"):

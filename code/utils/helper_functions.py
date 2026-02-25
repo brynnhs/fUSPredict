@@ -1,24 +1,90 @@
-import scipy.io
+import glob
+import os
+import random
+from pathlib import Path
+
+import matplotlib
+import matplotlib.pyplot as plt
 import numpy as np
+import scipy.io
 import torch
 import torch.nn.functional as F
-import os
-import glob
-from scipy import signal
-from scipy import ndimage as ndi
-import random
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib
 from matplotlib.path import Path as MatplotlibPath
-from pathlib import Path
-import math
+from scipy import ndimage as ndi
+from scipy import signal
+
 """
 Author: Brynn Harris-Shanks, 2026
 """
+
+
+def _repo_root_from_utils():
+    # helper_functions.py -> utils -> code -> repo_root
+    return Path(__file__).resolve().parents[2]
+
+
+def _tail_after_derivatives_preprocessing(path_obj):
+    parts = path_obj.parts
+    lower = [p.lower() for p in parts]
+    for i in range(len(parts) - 1):
+        if lower[i] == "derivatives" and lower[i + 1] == "preprocessing":
+            return Path(*parts[i + 2 :]) if i + 2 < len(parts) else Path()
+    return None
+
+
+def _candidate_baseline_dirs(baseline_dir):
+    requested = Path(baseline_dir)
+    repo_deriv_root = _repo_root_from_utils() / "derivatives" / "preprocessing"
+    candidates = [requested]
+
+    tail = _tail_after_derivatives_preprocessing(requested)
+    if tail is not None:
+        candidates.append(repo_deriv_root / tail)
+
+    deduped = []
+    seen = set()
+    for cand in candidates:
+        key = str(cand.resolve()) if cand.exists() else str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cand)
+    return deduped
+
+
+def _resolve_baseline_dir_with_files(baseline_dir):
+    candidates = _candidate_baseline_dirs(baseline_dir)
+    for cand in candidates:
+        files = sorted(cand.glob("baseline_*.npz"))
+        if files:
+            return cand, files
+    return candidates[0], []
+
+
+def _resolve_deriv_root(deriv_root):
+    requested = Path(deriv_root)
+    repo_deriv_root = _repo_root_from_utils() / "derivatives" / "preprocessing"
+
+    tail = _tail_after_derivatives_preprocessing(requested)
+    if tail is not None:
+        remapped = repo_deriv_root / tail
+        if remapped.exists():
+            return remapped
+    return requested
+
+
+def squeeze_frames(frames):
+    arr = np.asarray(frames)
+    if arr.ndim == 3:
+        return arr
+    if arr.ndim == 4 and arr.shape[1] == 1:
+        return arr[:, 0, :, :]
+    raise ValueError(f"Unsupported frame shape: {arr.shape}; expected [T,H,W] or [T,1,H,W]")
+
 def load_saved_baseline_sessions(base_dir):
     sessions = []
-    for p in sorted(Path(base_dir).glob("baseline_*.npz")):
+    resolved_dir, baseline_files = _resolve_baseline_dir_with_files(base_dir)
+    for p in baseline_files:
         try:
             d = np.load(p, allow_pickle=False)
             sess = {
@@ -30,9 +96,12 @@ def load_saved_baseline_sessions(base_dir):
             sessions.append(sess)
         except Exception as e:
             print(f"Error loading {p.name}: {e}")
+    if len(baseline_files) == 0:
+        print(f"WARNING: No baseline_*.npz files found in {resolved_dir}")
     return sessions
 
 def get_baseline_dir(deriv_root, subject, mode):
+    deriv_root = _resolve_deriv_root(deriv_root)
     if mode == "raw":
         return Path(deriv_root) / subject / "baseline_only"
     return Path(deriv_root) / subject / "baseline_only_normalized" / mode
@@ -252,22 +321,23 @@ def load_all_baseline(baseline_dir):
     Returns:
         List of dicts, each containing a session's baseline data
     """
-    baseline_files = sorted(glob.glob(os.path.join(baseline_dir, "baseline_*.npz")))
-    
+    resolved_dir, baseline_files = _resolve_baseline_dir_with_files(baseline_dir)
+
     if len(baseline_files) == 0:
-        print(f"⚠️  No baseline_*.npz files found in {baseline_dir}")
+        print(f"WARNING: No baseline_*.npz files found in {resolved_dir}")
         return []
-    
+
     all_sessions = []
     for path in baseline_files:
         try:
             session_data = load_baseline_session(path)
             all_sessions.append(session_data)
         except Exception as e:
-            print(f"❌ Error loading {os.path.basename(path)}: {e}")
-    
-    print(f"✅ Loaded {len(all_sessions)} baseline sessions")
+            print(f"Error loading {os.path.basename(path)}: {e}")
+
+    print(f"Loaded {len(all_sessions)} baseline sessions")
     return all_sessions
+
 # Function to plot raw fUS intensity over time with label shading
 def plot_fus_timecourse_with_labels(
     fus_path_or_dir,
@@ -501,7 +571,6 @@ def acq_wise_split(big_acquisition_indices,seed=42,split=0.8):
     test_mask = torch.isin(big_acquisition_indices, torch.tensor(test_acqs))
     return train_mask, test_mask
 
-import torch
 
 # Function to split the data into train and test sets --> this is to split the data into train and test sets
 def mid_split_whole(big_acquisition_indices, split=0.8):
@@ -750,8 +819,6 @@ def frame_diff(images: np.ndarray, mode: str = "window", window: int = 8) -> np.
     return diff
 
 
-import torch
-import torch.nn.functional as F
 # Function to pad or crop the %CBV data to the target size --> this is to pad or crop the %CBV data to the target size
 def tensor_pad_or_crop(cbv_data, target_size: int = 112):
     """
@@ -812,7 +879,7 @@ def tensor_pad_or_crop(cbv_data, target_size: int = 112):
 
 import numpy as np
 
-import numpy as np
+
 # Function to pad or crop the %CBV data to the target size --> this is to pad or crop the %CBV data to the target size
 def np_pad_or_crop_to_square(cbv_data, target_size: int = 112, verbose=False):
     """
@@ -977,6 +1044,7 @@ def create_roi_auto(images, file_idx, percentile=35.0, min_pixels=500):
 
 
 import numpy as np
+
 
 # Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
 def delta_cbv_roi(images, labels_arr, roi_mask, use_log=False, robust=True):
@@ -1154,11 +1222,8 @@ def normalize_frames_pixelwise(
 
 
 import numpy as np
-from scipy.ndimage import uniform_filter
 
 
-import numpy as np
-from scipy.ndimage import uniform_filter
 # Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
 def delta_cbv_roi_adaptive(
     images,
@@ -1251,6 +1316,8 @@ def delta_cbv_roi_adaptive(
 
 import numpy as np
 from scipy.ndimage import convolve
+
+
 # Function to create the pillbox kernel --> this is to create the pillbox kernel
 def create_pillbox_kernel(radius: int):
     """
@@ -1304,6 +1371,8 @@ def pillbox_filter(data: np.ndarray, radius: int = 2) -> np.ndarray:
 
 import numpy as np
 from sklearn.decomposition import PCA
+
+
 # Function to perform PCA-based denoising --> this is to perform PCA-based denoising
 def pca_denoise(images, n_components=None, var_keep=0.70):
     """
@@ -1392,5 +1461,3 @@ def get_or_create_roi_mask(images, file_idx, force_auto=False, auto_percentile=3
         print(f"Mask created and loaded → {mask_path}")
 
     return mask
-
-
