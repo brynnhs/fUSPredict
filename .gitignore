@@ -1,6 +1,8 @@
 /sourcedata
 /derivatives
 /derivatives/modeling
+/code/derivatives/
+/code/2_exploratory_data_analysis/derivatives/
 **/__pycache__/
 *.pyc
 *.npz
