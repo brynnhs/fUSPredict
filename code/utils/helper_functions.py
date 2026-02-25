@@ -17,6 +17,62 @@ from scipy import signal
 Author: Brynn Harris-Shanks, 2026
 """
 
+
+def _repo_root_from_utils():
+    # helper_functions.py -> utils -> code -> repo_root
+    return Path(__file__).resolve().parents[2]
+
+
+def _tail_after_derivatives_preprocessing(path_obj):
+    parts = path_obj.parts
+    lower = [p.lower() for p in parts]
+    for i in range(len(parts) - 1):
+        if lower[i] == "derivatives" and lower[i + 1] == "preprocessing":
+            return Path(*parts[i + 2 :]) if i + 2 < len(parts) else Path()
+    return None
+
+
+def _candidate_baseline_dirs(baseline_dir):
+    requested = Path(baseline_dir)
+    repo_deriv_root = _repo_root_from_utils() / "derivatives" / "preprocessing"
+    candidates = [requested]
+
+    tail = _tail_after_derivatives_preprocessing(requested)
+    if tail is not None:
+        candidates.append(repo_deriv_root / tail)
+
+    deduped = []
+    seen = set()
+    for cand in candidates:
+        key = str(cand.resolve()) if cand.exists() else str(cand)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(cand)
+    return deduped
+
+
+def _resolve_baseline_dir_with_files(baseline_dir):
+    candidates = _candidate_baseline_dirs(baseline_dir)
+    for cand in candidates:
+        files = sorted(cand.glob("baseline_*.npz"))
+        if files:
+            return cand, files
+    return candidates[0], []
+
+
+def _resolve_deriv_root(deriv_root):
+    requested = Path(deriv_root)
+    repo_deriv_root = _repo_root_from_utils() / "derivatives" / "preprocessing"
+
+    tail = _tail_after_derivatives_preprocessing(requested)
+    if tail is not None:
+        remapped = repo_deriv_root / tail
+        if remapped.exists():
+            return remapped
+    return requested
+
+
 def squeeze_frames(frames):
     arr = np.asarray(frames)
     if arr.ndim == 3:
@@ -27,7 +83,8 @@ def squeeze_frames(frames):
 
 def load_saved_baseline_sessions(base_dir):
     sessions = []
-    for p in sorted(Path(base_dir).glob("baseline_*.npz")):
+    resolved_dir, baseline_files = _resolve_baseline_dir_with_files(base_dir)
+    for p in baseline_files:
         try:
             d = np.load(p, allow_pickle=False)
             sess = {
@@ -39,9 +96,12 @@ def load_saved_baseline_sessions(base_dir):
             sessions.append(sess)
         except Exception as e:
             print(f"Error loading {p.name}: {e}")
+    if len(baseline_files) == 0:
+        print(f"WARNING: No baseline_*.npz files found in {resolved_dir}")
     return sessions
 
 def get_baseline_dir(deriv_root, subject, mode):
+    deriv_root = _resolve_deriv_root(deriv_root)
     if mode == "raw":
         return Path(deriv_root) / subject / "baseline_only"
     return Path(deriv_root) / subject / "baseline_only_normalized" / mode
@@ -261,22 +321,23 @@ def load_all_baseline(baseline_dir):
     Returns:
         List of dicts, each containing a session's baseline data
     """
-    baseline_files = sorted(glob.glob(os.path.join(baseline_dir, "baseline_*.npz")))
-    
+    resolved_dir, baseline_files = _resolve_baseline_dir_with_files(baseline_dir)
+
     if len(baseline_files) == 0:
-        print(f"⚠️  No baseline_*.npz files found in {baseline_dir}")
+        print(f"WARNING: No baseline_*.npz files found in {resolved_dir}")
         return []
-    
+
     all_sessions = []
     for path in baseline_files:
         try:
             session_data = load_baseline_session(path)
             all_sessions.append(session_data)
         except Exception as e:
-            print(f"❌ Error loading {os.path.basename(path)}: {e}")
-    
-    print(f"✅ Loaded {len(all_sessions)} baseline sessions")
+            print(f"Error loading {os.path.basename(path)}: {e}")
+
+    print(f"Loaded {len(all_sessions)} baseline sessions")
     return all_sessions
+
 # Function to plot raw fUS intensity over time with label shading
 def plot_fus_timecourse_with_labels(
     fus_path_or_dir,
@@ -1400,5 +1461,3 @@ def get_or_create_roi_mask(images, file_idx, force_auto=False, auto_percentile=3
         print(f"Mask created and loaded → {mask_path}")
 
     return mask
-
-
