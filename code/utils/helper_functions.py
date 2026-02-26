@@ -508,124 +508,124 @@ def clip(cbv_data, bottom, top):
         cbv_clipped = np.clip(cbv_data, p_low, p_high)
     return cbv_clipped
 
-# Function to interpolate the %CBV data to the target size --> this is to resize the %CBV data to the target size
-def tensor_interpolate(cbv_data, target_size = 112):
-    cbv_tensor = torch.from_numpy(cbv_data).unsqueeze(1)  # (M, 1, H_var, 128)
-    resized_cbv = F.interpolate(
-        cbv_tensor, 
-        size=(target_size, target_size),  # (H_out, W_out)
-        mode='bilinear', 
-        align_corners=False
-    )
-    return resized_cbv
+# # Function to interpolate the %CBV data to the target size --> this is to resize the %CBV data to the target size
+# def tensor_interpolate(cbv_data, target_size = 112):
+#     cbv_tensor = torch.from_numpy(cbv_data).unsqueeze(1)  # (M, 1, H_var, 128)
+#     resized_cbv = F.interpolate(
+#         cbv_tensor, 
+#         size=(target_size, target_size),  # (H_out, W_out)
+#         mode='bilinear', 
+#         align_corners=False
+#     )
+#     return resized_cbv
 
-# Function to apply a high pass filter to the %CBV data --> this is to remove low frequency noise
-def high_pass(cbv_data, frame_rate = 2.5):
-    if cbv_data.size > 0:
-        nyquist = frame_rate / 2
-        cutoff = 0.05 / nyquist  # Normalized cutoff frequency
-        order = 4
-        b, a = signal.butter(order, cutoff, btype='high', analog=False)
-        cbv_data = signal.filtfilt(b, a, cbv_data, axis=0)  # Apply along time axis
-    return cbv_data
+# # Function to apply a high pass filter to the %CBV data --> this is to remove low frequency noise
+# def high_pass(cbv_data, frame_rate = 2.5):
+#     if cbv_data.size > 0:
+#         nyquist = frame_rate / 2
+#         cutoff = 0.05 / nyquist  # Normalized cutoff frequency
+#         order = 4
+#         b, a = signal.butter(order, cutoff, btype='high', analog=False)
+#         cbv_data = signal.filtfilt(b, a, cbv_data, axis=0)  # Apply along time axis
+#     return cbv_data
 
 # Function to get the height and width of the %CBV data --> this is to resize the %CBV data to the target size
-def height_width_matfile(mat_files):
-    heights = []
-    widths = []
-    for mat_path in mat_files:
-        print(f"Verifying file: {mat_path}")
-        mat_data = scipy.io.loadmat(mat_path)
-        doppler_data = mat_data['Doppler']
-        doppler_data = doppler_data[np.newaxis, :, :, :]  # Add dim for channel-like
-        images = np.transpose(doppler_data, (3, 0, 2, 1)).astype(np.float32)  # (N, 1, H_var, 128)
-        h, w = images.shape[2], images.shape[3]
-        heights.append(h)
-        widths.append(w)
-        print(f"  - Shape: {images.shape} (H={h}, W={w})")
+# def height_width_matfile(mat_files):
+#     heights = []
+#     widths = []
+#     for mat_path in mat_files:
+#         print(f"Verifying file: {mat_path}")
+#         mat_data = scipy.io.loadmat(mat_path)
+#         doppler_data = mat_data['Doppler']
+#         doppler_data = doppler_data[np.newaxis, :, :, :]  # Add dim for channel-like
+#         images = np.transpose(doppler_data, (3, 0, 2, 1)).astype(np.float32)  # (N, 1, H_var, 128)
+#         h, w = images.shape[2], images.shape[3]
+#         heights.append(h)
+#         widths.append(w)
+#         print(f"  - Shape: {images.shape} (H={h}, W={w})")
 
-    return heights, widths
+#     return heights, widths
 
-# Function to split the data into train and test sets --> this is to split the data into train and test sets
-def acq_wise_split(big_acquisition_indices,seed=42,split=0.8):
-    # Split acquisition-wise into train and test (80% train, 20% test)
-    unique_acqs = torch.unique(big_acquisition_indices)
-    num_acq = len(unique_acqs)
-    print(f"Number of acquisitions: {num_acq}")
+# # Function to split the data into train and test sets --> this is to split the data into train and test sets
+# def acq_wise_split(big_acquisition_indices,seed=42,split=0.8):
+#     # Split acquisition-wise into train and test (80% train, 20% test)
+#     unique_acqs = torch.unique(big_acquisition_indices)
+#     num_acq = len(unique_acqs)
+#     print(f"Number of acquisitions: {num_acq}")
 
-    # Set random seed for reproducibility
-    random.seed(seed)
-    acq_list = list(unique_acqs.numpy())  # Convert to list for shuffling
-    random.shuffle(acq_list)
+#     # Set random seed for reproducibility
+#     random.seed(seed)
+#     acq_list = list(unique_acqs.numpy())  # Convert to list for shuffling
+#     random.shuffle(acq_list)
 
-    # Split: approximately 80/20
-    train_size = int(split * num_acq)
-    train_acqs = acq_list[:train_size]
-    test_acqs = acq_list[train_size:]
+#     # Split: approximately 80/20
+#     train_size = int(split * num_acq)
+#     train_acqs = acq_list[:train_size]
+#     test_acqs = acq_list[train_size:]
 
-    print(f"Train acquisitions: {len(train_acqs)}")
-    print(f"Test acquisitions: {len(test_acqs)}")
+#     print(f"Train acquisitions: {len(train_acqs)}")
+#     print(f"Test acquisitions: {len(test_acqs)}")
 
-    # Create masks
-    train_mask = torch.isin(big_acquisition_indices, torch.tensor(train_acqs))
-    test_mask = torch.isin(big_acquisition_indices, torch.tensor(test_acqs))
-    return train_mask, test_mask
+#     # Create masks
+#     train_mask = torch.isin(big_acquisition_indices, torch.tensor(train_acqs))
+#     test_mask = torch.isin(big_acquisition_indices, torch.tensor(test_acqs))
+#     return train_mask, test_mask
 
 
-# Function to split the data into train and test sets --> this is to split the data into train and test sets
-def mid_split_whole(big_acquisition_indices, split=0.8):
-    # Apply middle split (40% train, 20% test, 40% train) within each acquisition
-    # on the concatenated dataset using big_acquisition_indices to group frames.
-    unique_acqs = torch.unique(big_acquisition_indices)
-    num_acq = len(unique_acqs)
-    print(f"Number of acquisitions: {num_acq}")
+# # Function to split the data into train and test sets --> this is to split the data into train and test sets
+# def mid_split_whole(big_acquisition_indices, split=0.8):
+#     # Apply middle split (40% train, 20% test, 40% train) within each acquisition
+#     # on the concatenated dataset using big_acquisition_indices to group frames.
+#     unique_acqs = torch.unique(big_acquisition_indices)
+#     num_acq = len(unique_acqs)
+#     print(f"Number of acquisitions: {num_acq}")
 
-    total_N = len(big_acquisition_indices)
-    train_indices = []
-    test_indices = []
+#     total_N = len(big_acquisition_indices)
+#     train_indices = []
+#     test_indices = []
 
-    for acq in unique_acqs:
-        mask = (big_acquisition_indices == acq)
-        sub_indices = torch.where(mask)[0].tolist()  # Get global indices for this acq
-        sub_N = len(sub_indices)
+#     for acq in unique_acqs:
+#         mask = (big_acquisition_indices == acq)
+#         sub_indices = torch.where(mask)[0].tolist()  # Get global indices for this acq
+#         sub_N = len(sub_indices)
 
-        if sub_N == 0:
-            continue
+#         if sub_N == 0:
+#             continue
 
-        test_size = int((1 - split) * sub_N)
-        train_size_per_side = (sub_N - test_size) // 2
-        test_start = train_size_per_side
-        test_end = test_start + test_size
+#         test_size = int((1 - split) * sub_N)
+#         train_size_per_side = (sub_N - test_size) // 2
+#         test_start = train_size_per_side
+#         test_end = test_start + test_size
 
-        # Adjust if necessary to handle odd sizes
-        # Note: The last train part gets any remainder due to integer division
+#         # Adjust if necessary to handle odd sizes
+#         # Note: The last train part gets any remainder due to integer division
 
-        sub_train = sub_indices[0:train_size_per_side] + sub_indices[test_end:]
-        sub_test = sub_indices[test_start:test_end]
+#         sub_train = sub_indices[0:train_size_per_side] + sub_indices[test_end:]
+#         sub_test = sub_indices[test_start:test_end]
 
-        train_indices.extend(sub_train)
-        test_indices.extend(sub_test)
+#         train_indices.extend(sub_train)
+#         test_indices.extend(sub_test)
 
-    # Create masks
-    train_mask = torch.zeros(total_N, dtype=torch.bool)
-    test_mask = torch.zeros(total_N, dtype=torch.bool)
+#     # Create masks
+#     train_mask = torch.zeros(total_N, dtype=torch.bool)
+#     test_mask = torch.zeros(total_N, dtype=torch.bool)
 
-    train_mask[torch.tensor(train_indices)] = True
-    test_mask[torch.tensor(test_indices)] = True
+#     train_mask[torch.tensor(train_indices)] = True
+#     test_mask[torch.tensor(test_indices)] = True
 
-    print(f"Train frames: {train_mask.sum().item()}")
-    print(f"Test frames: {test_mask.sum().item()}")
+#     print(f"Train frames: {train_mask.sum().item()}")
+#     print(f"Test frames: {test_mask.sum().item()}")
 
-    return train_mask, test_mask
+#     return train_mask, test_mask
 
-# Function to shave the data off the start and end --> this is to remove the start and end of the data
-def data_shave(images, labels_arr, shave=0):
-    # Shave off from start and end 
-    M = images.shape[0]
-    shave = int(shave * M)
-    truncated_cbv = images[shave : M - shave]
-    truncated_labels = labels_arr[shave : M - shave]
-    return truncated_cbv, truncated_labels
+# # Function to shave the data off the start and end --> this is to remove the start and end of the data
+# def data_shave(images, labels_arr, shave=0):
+#     # Shave off from start and end 
+#     M = images.shape[0]
+#     shave = int(shave * M)
+#     truncated_cbv = images[shave : M - shave]
+#     truncated_labels = labels_arr[shave : M - shave]
+#     return truncated_cbv, truncated_labels
 
 # Function to add shaded regions for contiguous segments of the same label --> this is to add shaded regions to the plot
 def add_label_shading(ax, labels, colors_dict, alpha=0.15):
@@ -647,91 +647,91 @@ def add_label_shading(ax, labels, colors_dict, alpha=0.15):
             ax.axvspan(start, end, color=color, alpha=alpha, zorder=0)
 
 # Function to plot the %CBV mean for a specific acquisition --> this is to plot the %CBV mean for a specific acquisition
-def plot_cbv_mean(acqs, images, labels, ACQ_INDICE):
-    # Create mask for the specific acquisition
-    acq_mask = (acqs == ACQ_INDICE)
-    # Compute CBV time series for the selected acquisition
-    cbv_ts = []
-    for i in np.where(acq_mask)[0]:  # Indices where acq_mask is True
-        frame_mean = images[i].squeeze().mean().item()  # Mean over HxW
-        cbv_ts.append(frame_mean)
-    label_colors = { -1: 'lightblue', 0: 'red', 1: 'lightgreen' }
-    # Get labels for the selected acquisition
-    acq_labels = np.asarray(labels[acq_mask])
+# def plot_cbv_mean(acqs, images, labels, ACQ_INDICE):
+#     # Create mask for the specific acquisition
+#     acq_mask = (acqs == ACQ_INDICE)
+#     # Compute CBV time series for the selected acquisition
+#     cbv_ts = []
+#     for i in np.where(acq_mask)[0]:  # Indices where acq_mask is True
+#         frame_mean = images[i].squeeze().mean().item()  # Mean over HxW
+#         cbv_ts.append(frame_mean)
+#     label_colors = { -1: 'lightblue', 0: 'red', 1: 'lightgreen' }
+#     # Get labels for the selected acquisition
+#     acq_labels = np.asarray(labels[acq_mask])
 
-    # Create the plot
-    fig, ax = plt.subplots(1, 1, figsize=(12, 5), constrained_layout=True)
-    # Add label shading (behind the line)
-    add_label_shading(ax, acq_labels, label_colors)
-    # CBV% plot
-    ax.plot(cbv_ts, color='tab:red', lw=1.0, label='CBV%')
-    ax.set_ylabel('CBV% (vs baseline)')
-    ax.set_xlabel('Frame')
-    ax.legend(loc='upper right')
-    ax.grid(alpha=0.3)
-    plt.show()
+#     # Create the plot
+#     fig, ax = plt.subplots(1, 1, figsize=(12, 5), constrained_layout=True)
+#     # Add label shading (behind the line)
+#     add_label_shading(ax, acq_labels, label_colors)
+#     # CBV% plot
+#     ax.plot(cbv_ts, color='tab:red', lw=1.0, label='CBV%')
+#     ax.set_ylabel('CBV% (vs baseline)')
+#     ax.set_xlabel('Frame')
+#     ax.legend(loc='upper right')
+#     ax.grid(alpha=0.3)
+#     plt.show()
 
 # Function to plot the %CBV samples --> this is to plot the %CBV samples
-def plot_cbv_samples(cbv_tensor, labels, start=1, step=5, n=10, cmap='inferno',
-                     vmin=None, vmax=None, brain_roi=None):
-    """
-    Plot n frames of %CBV starting at `start`, stepping by `step`.
-    - cbv_tensor: torch.Tensor (T,1,H,W) or np.ndarray (T,H,W)
-    - brain_roi (optional): (H,W) mask; if provided, percentiles for vmin/vmax
-      are computed only inside ROI (ignores zeros outside).
-    """
-    # Ensure NumPy (T,H,W)
-    if isinstance(cbv_tensor, torch.Tensor):
-        X = cbv_tensor.detach().cpu().numpy()
-    else:
-        X = np.asarray(cbv_tensor)
+# def plot_cbv_samples(cbv_tensor, labels, start=1, step=5, n=10, cmap='inferno',
+#                      vmin=None, vmax=None, brain_roi=None):
+#     """
+#     Plot n frames of %CBV starting at `start`, stepping by `step`.
+#     - cbv_tensor: torch.Tensor (T,1,H,W) or np.ndarray (T,H,W)
+#     - brain_roi (optional): (H,W) mask; if provided, percentiles for vmin/vmax
+#       are computed only inside ROI (ignores zeros outside).
+#     """
+#     # Ensure NumPy (T,H,W)
+#     if isinstance(cbv_tensor, torch.Tensor):
+#         X = cbv_tensor.detach().cpu().numpy()
+#     else:
+#         X = np.asarray(cbv_tensor)
 
-    y = np.asarray(labels)
+#     y = np.asarray(labels)
 
-    if X.ndim == 4 and X.shape[1] == 1:  # (T,1,H,W) -> (T,H,W)
-        X = X[:, 0]
-    if X.ndim != 3:
-        raise ValueError(f"Expected (T,H,W) or (T,1,H,W); got {X.shape}")
+#     if X.ndim == 4 and X.shape[1] == 1:  # (T,1,H,W) -> (T,H,W)
+#         X = X[:, 0]
+#     if X.ndim != 3:
+#         raise ValueError(f"Expected (T,H,W) or (T,1,H,W); got {X.shape}")
 
-    T, H, W = X.shape
-    idxs = [start + i*step for i in range(n)]
-    idxs = [i for i in idxs if 0 <= i < T]
-    if not idxs:
-        raise ValueError("No valid indices to plot (check start/step/n vs T).")
+#     T, H, W = X.shape
+#     idxs = [start + i*step for i in range(n)]
+#     idxs = [i for i in idxs if 0 <= i < T]
+#     if not idxs:
+#         raise ValueError("No valid indices to plot (check start/step/n vs T).")
 
-    # Grid (2 rows x 5 cols for 10 frames)
-    cols = 5
-    rows = int(np.ceil(len(idxs) / cols))
-    fig, axes = plt.subplots(rows, cols, figsize=(3.2*cols, 3.2*rows), constrained_layout=True)
-    axes = np.atleast_1d(axes).ravel()
+#     # Grid (2 rows x 5 cols for 10 frames)
+#     cols = 5
+#     rows = int(np.ceil(len(idxs) / cols))
+#     fig, axes = plt.subplots(rows, cols, figsize=(3.2*cols, 3.2*rows), constrained_layout=True)
+#     axes = np.atleast_1d(axes).ravel()
 
-    last_im = None
-    for ax, i in zip(axes, idxs):
-        last_im = ax.imshow(X[i], cmap=cmap, vmin=vmin, vmax=vmax)
-        ax.set_title(f"Frame {i}, Label: {y[i]}")
-        ax.axis('off')
+#     last_im = None
+#     for ax, i in zip(axes, idxs):
+#         last_im = ax.imshow(X[i], cmap=cmap, vmin=vmin, vmax=vmax)
+#         ax.set_title(f"Frame {i}, Label: {y[i]}")
+#         ax.axis('off')
 
-    # Hide any unused subplots
-    for ax in axes[len(idxs):]:
-        ax.axis('off')
+#     # Hide any unused subplots
+#     for ax in axes[len(idxs):]:
+#         ax.axis('off')
 
-    # One shared colorbar
-    if last_im is not None:
-        cbar = fig.colorbar(last_im, ax=axes[:len(idxs)], shrink=0.8, fraction=0.03, pad=0.02)
-        cbar.set_label('%CBV')
+#     # One shared colorbar
+#     if last_im is not None:
+#         cbar = fig.colorbar(last_im, ax=axes[:len(idxs)], shrink=0.8, fraction=0.03, pad=0.02)
+#         cbar.set_label('%CBV')
 
-    plt.show()
+#     plt.show()
 
-# Function to compute the label distribution --> this is to compute the label distribution # no use in  baseline
-def pause_work_distrib(labels):
-    # Compute label distribution (excluding -1, which isn't used in valid windows)
-    label_counts = np.bincount(labels, minlength=2)  # Counts for 0, 1
-    total_valid = sum(label_counts)
+# # Function to compute the label distribution --> this is to compute the label distribution # no use in  baseline
+# def pause_work_distrib(labels):
+#     # Compute label distribution (excluding -1, which isn't used in valid windows)
+#     label_counts = np.bincount(labels, minlength=2)  # Counts for 0, 1
+#     total_valid = sum(label_counts)
 
-    # Print for verification
-    for label, count in enumerate(label_counts):
-        percentage = (count / total_valid * 100) if total_valid > 0 else 0
-        print(f"Label {label}: {count} patches ({percentage:.2f}%)")
+#     # Print for verification
+#     for label, count in enumerate(label_counts):
+#         percentage = (count / total_valid * 100) if total_valid > 0 else 0
+#         print(f"Label {label}: {count} patches ({percentage:.2f}%)")
 
 # Function to normalize the data to [0, 1] --> this is to normalize the data to [0, 1]
 def norm(data):
@@ -1042,106 +1042,101 @@ def create_roi_auto(images, file_idx, percentile=35.0, min_pixels=500):
     )
     return mask
 
-
-import numpy as np
-
-
 # Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
-def delta_cbv_roi(images, labels_arr, roi_mask, use_log=False, robust=True):
-    """
-    Compute %CBV change relative to baseline, using only ROI pixels.
+# # def delta_cbv_roi(images, labels_arr, roi_mask, use_log=False, robust=True):
+#     """
+#     Compute %CBV change relative to baseline, using only ROI pixels.
     
-    Parameters
-    ----------
-    images : np.ndarray
-        Shape (N, 1, H, W) or (N, H, W) – your fUS frames (raw Doppler or power)
-    labels_arr : np.ndarray
-        Shape (N,) with -1 = baseline, 0 = success, 1 = mistake
-    roi_mask : np.ndarray bool
-        Shape (H, W) – True inside the region of interest
-    use_log : bool
-        If True → log-ratio method (more robust to outliers)
-    robust : bool
-        If True → use median baseline instead of mean
+#     Parameters
+#     ----------
+#     images : np.ndarray
+#         Shape (N, 1, H, W) or (N, H, W) – your fUS frames (raw Doppler or power)
+#     labels_arr : np.ndarray
+#         Shape (N,) with -1 = baseline, 0 = success, 1 = mistake
+#     roi_mask : np.ndarray bool
+#         Shape (H, W) – True inside the region of interest
+#     use_log : bool
+#         If True → log-ratio method (more robust to outliers)
+#     robust : bool
+#         If True → use median baseline instead of mean
     
-    Returns
-    -------
-    cbv_data : np.ndarray
-        Shape (M, H, W), float32 – %CBV change, zero outside ROI, only non-baseline frames
-    labels_filtered : np.ndarray
-        Shape (M,) – corresponding behavioral labels (baseline frames removed)
-    """
-    eps = np.finfo(np.float32).eps
+#     Returns
+#     -------
+#     cbv_data : np.ndarray
+#         Shape (M, H, W), float32 – %CBV change, zero outside ROI, only non-baseline frames
+#     labels_filtered : np.ndarray
+#         Shape (M,) – corresponding behavioral labels (baseline frames removed)
+#     """
+#     eps = np.finfo(np.float32).eps
     
-    # ------------------------------------------------------------------
-    # 1. Ensure (N, H, W) and float64 for precision
-    # ------------------------------------------------------------------
-    if images.ndim == 4:
-        images = images.squeeze(axis=1)          # (N,1,H,W) → (N,H,W)
-    images = images.astype(np.float64)
+#     # ------------------------------------------------------------------
+#     # 1. Ensure (N, H, W) and float64 for precision
+#     # ------------------------------------------------------------------
+#     if images.ndim == 4:
+#         images = images.squeeze(axis=1)          # (N,1,H,W) → (N,H,W)
+#     images = images.astype(np.float64)
 
-    H, W = images.shape[1], images.shape[2]
-    if roi_mask.shape != (H, W):
-        raise ValueError(f"Mask shape {roi_mask.shape} doesn't match image spatial dims {(H,W)}")
+#     H, W = images.shape[1], images.shape[2]
+#     if roi_mask.shape != (H, W):
+#         raise ValueError(f"Mask shape {roi_mask.shape} doesn't match image spatial dims {(H,W)}")
 
-    # Expand mask for broadcasting: (1, H, W)
-    mask = roi_mask[np.newaxis, :, :].astype(bool)
+#     # Expand mask for broadcasting: (1, H, W)
+#     mask = roi_mask[np.newaxis, :, :].astype(bool)
 
-    # Mask non-ROI → NaN so they don't affect statistics
-    images_masked = np.where(mask, images, np.nan)
+#     # Mask non-ROI → NaN so they don't affect statistics
+#     images_masked = np.where(mask, images, np.nan)
 
-    # ------------------------------------------------------------------
-    # 2. Compute baseline from ROI pixels only
-    # ------------------------------------------------------------------
-    baseline_idx = (labels_arr == -1)
-    baseline_frames = images_masked[baseline_idx]      # (B, H, W)
+#     # ------------------------------------------------------------------
+#     # 2. Compute baseline from ROI pixels only
+#     # ------------------------------------------------------------------
+#     baseline_idx = (labels_arr == -1)
+#     baseline_frames = images_masked[baseline_idx]      # (B, H, W)
 
-    if baseline_frames.size == 0:
-        raise ValueError("No baseline frames found (label == -1)")
+#     if baseline_frames.size == 0:
+#         raise ValueError("No baseline frames found (label == -1)")
 
-    if robust:
-        baseline_map = np.nanmedian(baseline_frames, axis=0, keepdims=True)  # (1,H,W)
-    else:
-        baseline_map = np.nanmean(baseline_frames, axis=0, keepdims=True)
+#     if robust:
+#         baseline_map = np.nanmedian(baseline_frames, axis=0, keepdims=True)  # (1,H,W)
+#     else:
+#         baseline_map = np.nanmean(baseline_frames, axis=0, keepdims=True)
 
-    # Optional log transform
-    if use_log:
-        images_masked = np.log10(images_masked + eps)
-        baseline_map = np.log10(baseline_map + eps)
+#     # Optional log transform
+#     if use_log:
+#         images_masked = np.log10(images_masked + eps)
+#         baseline_map = np.log10(baseline_map + eps)
 
-    # ------------------------------------------------------------------
-    # 3. Compute ΔCBV
-    # ------------------------------------------------------------------
-    if use_log:
-        # Log-ratio → convert back to linear ratio
-        ratio = 10.0 ** (images_masked - baseline_map)
-        cbv_pct = 100.0 * (ratio - 1.0)
-    else:
-        denom = np.where(baseline_map == 0, eps, baseline_map)
-        cbv_pct = 100.0 * (images_masked - baseline_map) / denom
+#     # ------------------------------------------------------------------
+#     # 3. Compute ΔCBV
+#     # ------------------------------------------------------------------
+#     if use_log:
+#         # Log-ratio → convert back to linear ratio
+#         ratio = 10.0 ** (images_masked - baseline_map)
+#         cbv_pct = 100.0 * (ratio - 1.0)
+#     else:
+#         denom = np.where(baseline_map == 0, eps, baseline_map)
+#         cbv_pct = 100.0 * (images_masked - baseline_map) / denom
 
-    cbv_pct = cbv_pct.astype(np.float32)
+#     cbv_pct = cbv_pct.astype(np.float32)
 
-    # ------------------------------------------------------------------
-    # 4. Remove baseline frames + zero out non-ROI
-    # ------------------------------------------------------------------
-    non_baseline_idx = ~baseline_idx
-    cbv_data = cbv_pct[non_baseline_idx]                    # (M, H, W)
-    cbv_data[:, ~roi_mask] = 0.0                # zero outside ROI
+#     # ------------------------------------------------------------------
+#     # 4. Remove baseline frames + zero out non-ROI
+#     # ------------------------------------------------------------------
+#     non_baseline_idx = ~baseline_idx
+#     cbv_data = cbv_pct[non_baseline_idx]                    # (M, H, W)
+#     cbv_data[:, ~roi_mask] = 0.0                # zero outside ROI
 
-    labels_filtered = labels_arr[non_baseline_idx]
+#     labels_filtered = labels_arr[non_baseline_idx]
 
-    # ------------------------------------------------------------------
-    # 5. Quick sanity print
-    # ------------------------------------------------------------------
-    roi_min, roi_max = np.nanmin(cbv_pct[non_baseline_idx]), np.nanmax(cbv_pct[non_baseline_idx])
-    print(f"Acquisition ΔCBV (in ROI) → min: {roi_min:+.3f}%, max: {roi_max:+.3f}% | "
-          f"Frames kept: {len(labels_filtered)} | ROI pixels: {roi_mask.sum()}")
+#     # ------------------------------------------------------------------
+#     # 5. Quick sanity print
+#     # ------------------------------------------------------------------
+#     roi_min, roi_max = np.nanmin(cbv_pct[non_baseline_idx]), np.nanmax(cbv_pct[non_baseline_idx])
+#     print(f"Acquisition ΔCBV (in ROI) → min: {roi_min:+.3f}%, max: {roi_max:+.3f}% | "
+#           f"Frames kept: {len(labels_filtered)} | ROI pixels: {roi_mask.sum()}")
 
-    return cbv_data, labels_filtered
+#     return cbv_data, labels_filtered
 
 # Function to normalize the %CBV data per pixel over time, using ROI pixels only
-import numpy as np
 
 
 def normalize_frames_pixelwise(
@@ -1224,154 +1219,149 @@ def normalize_frames_pixelwise(
 import numpy as np
 
 
-# Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
-def delta_cbv_roi_adaptive(
-    images,
-    labels_arr,
-    roi_mask,
-    window_sec=20.0,
-    acquisition_rate_hz=2.0,
-    use_log=False,
-    robust=True,
-    spatial_filter_radius=2,
-    eps=np.finfo(np.float32).eps
-):
-    """
-    Adaptive ΔCBV with rolling z-score, ROI-only statistics, and output shape (M, 1, H, W)
-    """
-    window_frames = int(window_sec * acquisition_rate_hz)
-    if window_frames < 10:
-        raise ValueError("Window too small – increase window_sec or check rate")
+# # Function to compute the %CBV change relative to baseline, using only ROI pixels --> this is to compute the %CBV change relative to baseline, using only ROI pixels
+# def delta_cbv_roi_adaptive(
+#     images,
+#     labels_arr,
+#     roi_mask,
+#     window_sec=20.0,
+#     acquisition_rate_hz=2.0,
+#     use_log=False,
+#     robust=True,
+#     spatial_filter_radius=2,
+#     eps=np.finfo(np.float32).eps
+# ):
+#     """
+#     Adaptive ΔCBV with rolling z-score, ROI-only statistics, and output shape (M, 1, H, W)
+#     """
+#     window_frames = int(window_sec * acquisition_rate_hz)
+#     if window_frames < 10:
+#         raise ValueError("Window too small – increase window_sec or check rate")
 
-    # ------------------------------------------------------------------
-    # 1. Prep images: (N, H, W) float64
-    # ------------------------------------------------------------------
-    if images.ndim == 4:
-        images = images.squeeze(axis=1)           # (N,1,H,W) → (N,H,W)
-    images = images.astype(np.float64)
-    N, H, W = images.shape
+#     # ------------------------------------------------------------------
+#     # 1. Prep images: (N, H, W) float64
+#     # ------------------------------------------------------------------
+#     if images.ndim == 4:
+#         images = images.squeeze(axis=1)           # (N,1,H,W) → (N,H,W)
+#     images = images.astype(np.float64)
+#     N, H, W = images.shape
 
-    if roi_mask.shape != (H, W):
-        raise ValueError(f"Mask {roi_mask.shape} != image dims {(H,W)}")
+#     if roi_mask.shape != (H, W):
+#         raise ValueError(f"Mask {roi_mask.shape} != image dims {(H,W)}")
 
-    mask = roi_mask[np.newaxis, :, :].astype(bool)   # (1,H,W)
+#     mask = roi_mask[np.newaxis, :, :].astype(bool)   # (1,H,W)
 
-    if use_log:
-        images = np.log10(images + eps)
+#     if use_log:
+#         images = np.log10(images + eps)
 
-    # ------------------------------------------------------------------
-    # 2. Rolling z-score using ROI only
-    # ------------------------------------------------------------------
-    preprocessed = np.zeros((N, H, W), dtype=np.float32)
+#     # ------------------------------------------------------------------
+#     # 2. Rolling z-score using ROI only
+#     # ------------------------------------------------------------------
+#     preprocessed = np.zeros((N, H, W), dtype=np.float32)
     
-    start_idx = window_frames
+#     start_idx = window_frames
 
-    for i in range(start_idx, N):
-        buffer = images[i - window_frames : i]                    # (win, H, W)
-        buffer_masked = np.where(mask, buffer, np.nan)
+#     for i in range(start_idx, N):
+#         buffer = images[i - window_frames : i]                    # (win, H, W)
+#         buffer_masked = np.where(mask, buffer, np.nan)
 
-        if robust:
-            mu = np.nanmedian(buffer_masked, axis=0)
-        else:
-            mu = np.nanmean(buffer_masked, axis=0)
+#         if robust:
+#             mu = np.nanmedian(buffer_masked, axis=0)
+#         else:
+#             mu = np.nanmean(buffer_masked, axis=0)
 
-        sigma = np.nanstd(buffer_masked, axis=0) + eps
+#         sigma = np.nanstd(buffer_masked, axis=0) + eps
 
-        current_masked = np.where(roi_mask, images[i], np.nan)
-        z_frame = (current_masked - mu) / sigma
-        '''
-        if spatial_filter_radius is not None and spatial_filter_radius > 0:
-            size = 2 * spatial_filter_radius + 1
-            z_frame = uniform_filter(z_frame, size=size, mode='reflect')
-        '''
-        preprocessed[i] = np.where(roi_mask, z_frame, 0.0)
+#         current_masked = np.where(roi_mask, images[i], np.nan)
+#         z_frame = (current_masked - mu) / sigma
+#         '''
+#         if spatial_filter_radius is not None and spatial_filter_radius > 0:
+#             size = 2 * spatial_filter_radius + 1
+#             z_frame = uniform_filter(z_frame, size=size, mode='reflect')
+#         '''
+#         preprocessed[i] = np.where(roi_mask, z_frame, 0.0)
 
-    # ------------------------------------------------------------------
-    # 3. Keep only non-baseline frames after warm-up
-    # ------------------------------------------------------------------
-    valid_mask = (np.arange(N) >= start_idx) & (labels_arr != -1)
-    cbv_data = preprocessed[valid_mask]               # (M, H, W)
-    labels_filtered = labels_arr[valid_mask]
+#     # ------------------------------------------------------------------
+#     # 3. Keep only non-baseline frames after warm-up
+#     # ------------------------------------------------------------------
+#     valid_mask = (np.arange(N) >= start_idx) & (labels_arr != -1)
+#     cbv_data = preprocessed[valid_mask]               # (M, H, W)
+#     labels_filtered = labels_arr[valid_mask]
 
-    # ------------------------------------------------------------------
-    # 4. Add channel dimension back → (M, 1, H, W)
-    # ------------------------------------------------------------------
-    # cbv_data = cbv_data[:, np.newaxis, :, :].astype(np.float32)
+#     # ------------------------------------------------------------------
+#     # 4. Add channel dimension back → (M, 1, H, W)
+#     # ------------------------------------------------------------------
+#     # cbv_data = cbv_data[:, np.newaxis, :, :].astype(np.float32)
 
-    # ------------------------------------------------------------------
-    # 5. Print stats
-    # ------------------------------------------------------------------
-    if len(cbv_data) == 0:
-        raise ValueError("No valid frames after warm-up and baseline removal")
+#     # ------------------------------------------------------------------
+#     # 5. Print stats
+#     # ------------------------------------------------------------------
+#     if len(cbv_data) == 0:
+#         raise ValueError("No valid frames after warm-up and baseline removal")
     
-    roi_vals = cbv_data[np.tile(roi_mask, (len(cbv_data), 1, 1))]
-    roi_min, roi_max = np.min(roi_vals), np.max(roi_vals)
-    print(f"Adaptive ΔCBV (window={window_sec}s={window_frames}frames, ROI only) "
-          f"→ min: {roi_min:+.3f}, max: {roi_max:+.3f} | "
-          f"Frames kept: {len(labels_filtered)} | ROI pixels: {roi_mask.sum()} | "
-          f"Discarded first {start_idx} frames (warm-up)")
+#     roi_vals = cbv_data[np.tile(roi_mask, (len(cbv_data), 1, 1))]
+#     roi_min, roi_max = np.min(roi_vals), np.max(roi_vals)
+#     print(f"Adaptive ΔCBV (window={window_sec}s={window_frames}frames, ROI only) "
+#           f"→ min: {roi_min:+.3f}, max: {roi_max:+.3f} | "
+#           f"Frames kept: {len(labels_filtered)} | ROI pixels: {roi_mask.sum()} | "
+#           f"Discarded first {start_idx} frames (warm-up)")
 
-    return cbv_data, labels_filtered
-
-
-import numpy as np
-from scipy.ndimage import convolve
+#     return cbv_data, labels_filtered
 
 
-# Function to create the pillbox kernel --> this is to create the pillbox kernel
-def create_pillbox_kernel(radius: int):
-    """
-    Create a normalized 2D circular (pillbox) kernel.
-    """
-    if radius < 0:
-        raise ValueError("Radius must be >= 0")
-    if radius == 0:
-        return np.ones((1, 1), dtype=np.float32)
+# # Function to create the pillbox kernel --> this is to create the pillbox kernel
+# def create_pillbox_kernel(radius: int):
+#     """
+#     Create a normalized 2D circular (pillbox) kernel.
+#     """
+#     if radius < 0:
+#         raise ValueError("Radius must be >= 0")
+#     if radius == 0:
+#         return np.ones((1, 1), dtype=np.float32)
 
-    diameter = 2 * radius + 1
-    yy, xx = np.mgrid[-radius:radius+1, -radius:radius+1]
-    kernel = (xx**2 + yy**2 <= radius**2).astype(np.float32)
-    kernel /= kernel.sum()  # normalize
-    return kernel  # shape (diameter, diameter)
+#     diameter = 2 * radius + 1
+#     yy, xx = np.mgrid[-radius:radius+1, -radius:radius+1]
+#     kernel = (xx**2 + yy**2 <= radius**2).astype(np.float32)
+#     kernel /= kernel.sum()  # normalize
+#     return kernel  # shape (diameter, diameter)
 
-# Function to apply the pillbox filter --> this is to apply the pillbox filter
-def pillbox_filter(data: np.ndarray, radius: int = 2) -> np.ndarray:
-    """
-    Apply isotropic circular pillbox (uniform disk) smoothing.
+# # Function to apply the pillbox filter --> this is to apply the pillbox filter
+# def pillbox_filter(data: np.ndarray, radius: int = 2) -> np.ndarray:
+#     """
+#     Apply isotropic circular pillbox (uniform disk) smoothing.
     
-    Parameters
-    ----------
-    data : np.ndarray
-        Shape (M, H, W) – your CBV or z-scored frames (e.g. from delta_cbv_roi_adaptive)
-    radius : int
-        Radius of the disk in pixels (e.g. 2 → 5×5 circular kernel)
+#     Parameters
+#     ----------
+#     data : np.ndarray
+#         Shape (M, H, W) – your CBV or z-scored frames (e.g. from delta_cbv_roi_adaptive)
+#     radius : int
+#         Radius of the disk in pixels (e.g. 2 → 5×5 circular kernel)
     
-    Returns
-    -------
-    filtered : np.ndarray
-        Same shape (M, H, W), float32, smoothly filtered
-    """
-    if data.ndim != 3:
-        raise ValueError(f"Expected (M, H, W), got shape {data.shape}")
+#     Returns
+#     -------
+#     filtered : np.ndarray
+#         Same shape (M, H, W), float32, smoothly filtered
+#     """
+#     if data.ndim != 3:
+#         raise ValueError(f"Expected (M, H, W), got shape {data.shape}")
 
-    if radius == 0:
-        return data.astype(np.float32).copy()
+#     if radius == 0:
+#         return data.astype(np.float32).copy()
 
-    kernel = create_pillbox_kernel(radius)                     # (d, d)
-    kernel = kernel.reshape(1, 1, kernel.shape[0], kernel.shape[1])  # (1,1,d,d)
+#     kernel = create_pillbox_kernel(radius)                     # (d, d)
+#     kernel = kernel.reshape(1, 1, kernel.shape[0], kernel.shape[1])  # (1,1,d,d)
 
-    # Convolve across the batch (M frames)
-    filtered = convolve(data[:, np.newaxis, :, :], kernel, mode='reflect')
-    filtered = filtered.squeeze(1)  # remove channel dim → (M, H, W)
+#     # Convolve across the batch (M frames)
+#     filtered = convolve(data[:, np.newaxis, :, :], kernel, mode='reflect')
+#     filtered = filtered.squeeze(1)  # remove channel dim → (M, H, W)
 
-    print(f"Pillbox filter applied | radius={radius}px | "
-          f"kernel={2*radius+1}×{2*radius+1} ({kernel.sum()} pixels) | frames={data.shape[0]}")
+#     print(f"Pillbox filter applied | radius={radius}px | "
+#           f"kernel={2*radius+1}×{2*radius+1} ({kernel.sum()} pixels) | frames={data.shape[0]}")
 
-    return filtered.astype(np.float32)
+#     return filtered.astype(np.float32)
 
-import numpy as np
-from sklearn.decomposition import PCA
 
+import PCA
 
 # Function to perform PCA-based denoising --> this is to perform PCA-based denoising
 def pca_denoise(images, n_components=None, var_keep=0.70):
