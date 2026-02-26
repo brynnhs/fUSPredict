@@ -4,11 +4,11 @@ from pathlib import Path
 from utils import helper_functions as hf
 
 deriv_root = None
-EDA_ROOT_NAME = "eda"
-ACF_QC_FILENAME = "acf_qc_summary.csv"
-FDIFF_ROBUST_PCTL = (2.0, 98.0)
-SPATIAL_EPS = 1e-8
-SPATIAL_MIN_VALID_SAMPLES = 8
+eda_root_name = "eda"
+acf_qc_filename = "acf_qc_summary.csv"
+fdiff_robust_pctl = (2.0, 98.0)
+spatial_eps = 1e-8
+spatial_min_valid_samples = 8
 """Autocorrelation analysis utilities for fUS data."""
 
 
@@ -20,21 +20,21 @@ def configure(
     spatial_eps=None,
     spatial_min_valid_samples=None,
 ):
-    global deriv_root, EDA_ROOT_NAME, ACF_QC_FILENAME
-    global FDIFF_ROBUST_PCTL, SPATIAL_EPS, SPATIAL_MIN_VALID_SAMPLES
-
+    module_state = globals()
     if deriv_root_path is not None:
-        deriv_root = deriv_root_path
+        module_state["deriv_root"] = Path(deriv_root_path)
     if eda_root_name is not None:
-        EDA_ROOT_NAME = eda_root_name
+        module_state["eda_root_name"] = str(eda_root_name)
     if acf_qc_filename is not None:
-        ACF_QC_FILENAME = acf_qc_filename
+        module_state["acf_qc_filename"] = str(acf_qc_filename)
     if frame_diff_robust_pctl is not None:
-        FDIFF_ROBUST_PCTL = frame_diff_robust_pctl
+        module_state["fdiff_robust_pctl"] = tuple(
+            float(v) for v in frame_diff_robust_pctl
+        )
     if spatial_eps is not None:
-        SPATIAL_EPS = spatial_eps
+        module_state["spatial_eps"] = float(spatial_eps)
     if spatial_min_valid_samples is not None:
-        SPATIAL_MIN_VALID_SAMPLES = spatial_min_valid_samples
+        module_state["spatial_min_valid_samples"] = int(spatial_min_valid_samples)
 
 
 def canonical_session_id(value, known_modes):
@@ -74,7 +74,7 @@ def _ensure_deriv_root_or_raise():
 
 def analysis_subject_root(subject, subdir):
     root_base = _ensure_deriv_root_or_raise()
-    root = root_base / subject / EDA_ROOT_NAME / subdir
+    root = root_base / subject / eda_root_name / subdir
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -106,7 +106,7 @@ def finite_values(a):
 
 def robust_limits(a, pctl=None, symmetric=False, nonnegative=False, eps=1e-8):
     if pctl is None:
-        pctl = FDIFF_ROBUST_PCTL
+        pctl = fdiff_robust_pctl
     x = finite_values(a)
     if x.size == 0:
         return (0.0, 1.0)
@@ -160,7 +160,7 @@ def normalized_acf(x, max_lag):
 
 def load_acf_qc_map_for_subject(subject):
     root_base = _ensure_deriv_root_or_raise()
-    qc_path = root_base / subject / ACF_QC_FILENAME
+    qc_path = root_base / subject / acf_qc_filename
     if not qc_path.exists():
         return {}
 
@@ -217,7 +217,7 @@ def spatial_neighbor_offsets(neighborhood: int):
     raise ValueError(f"Unsupported neighborhood={neighborhood!r}; expected 4 or 8")
 
 
-def safe_temporal_corr_map(A, B, eps=SPATIAL_EPS, min_samples=SPATIAL_MIN_VALID_SAMPLES):
+def safe_temporal_corr_map(A, B, eps=spatial_eps, min_samples=spatial_min_valid_samples):
     A = np.asarray(A, dtype=np.float64)
     B = np.asarray(B, dtype=np.float64)
     if A.shape != B.shape:
@@ -299,8 +299,8 @@ def seed_temporal_corr_map(
     frames_3d,
     seed_center_yx,
     seed_radius=0,
-    eps=SPATIAL_EPS,
-    min_samples=SPATIAL_MIN_VALID_SAMPLES,
+    eps=spatial_eps,
+    min_samples=spatial_min_valid_samples,
 ):
     arr = np.asarray(frames_3d, dtype=np.float32)
     if arr.ndim != 3:
@@ -336,7 +336,7 @@ def seed_temporal_corr_map(
     return corr_map, n_valid, seed_ts, mask
 
 
-def spatial_autocorr_map(frames_3d, neighborhood=4, eps=SPATIAL_EPS, min_samples=SPATIAL_MIN_VALID_SAMPLES):
+def spatial_autocorr_map(frames_3d, neighborhood=4, eps=spatial_eps, min_samples=spatial_min_valid_samples):
     arr = np.asarray(frames_3d, dtype=np.float32)
     if arr.ndim != 3:
         raise ValueError(f"Expected [T,H,W], got shape {arr.shape}")

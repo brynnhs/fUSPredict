@@ -1,0 +1,51 @@
+# fUSPredict canonical configuration
+
+project:
+  name: fUSPredict
+  repo_root: .
+
+paths:
+  code: code
+  config: config
+  sourcedata: sourcedata
+  derivatives: derivatives
+  preprocessing: derivatives/preprocessing
+  utils: code/utils
+  modeling: derivatives/modeling
+  videos: derivatives/videos
+  manifests:
+    splits_multi: derivatives/preprocessing/splits_multi.json
+    splits_single_secundo: derivatives/preprocessing/splits_single_secundo.json
+
+subjects:
+  all:
+    - secundo
+    - gus
+  default: secundo
+
+eda:
+  root_name: eda
+  analysis_modes:
+  - raw
+  - mean_divide
+  - zscore
+  distribution:
+    n_bins: 120
+    max_points: 500000
+    mode_ranges:
+      mean_divide:
+      - -0.25
+      - 0.25
+      zscore:
+      - -3.0
+      - 3.0
+  acf_qc_filename: acf_qc_summary.csv
+  frame_diff_robust_percentiles:
+    - 2.0
+    - 98.0
+  spatial_eps: 1.0e-8
+  spatial_min_valid_samples: 8
+
+modeling:
+  random_seed: 42
+  openstl_root: null
