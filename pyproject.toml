@@ -5,3 +5,13 @@ exclude = [".venv", "build", "dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+
+[tool.ruff]
+src = ["code"]
+
+[tool.ruff.lint]
+# (optional) but usually you want isort rules on
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["utils"]
