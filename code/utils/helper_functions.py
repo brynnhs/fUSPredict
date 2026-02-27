@@ -104,7 +104,7 @@ def get_baseline_dir(deriv_root, subject, mode):
     deriv_root = _resolve_deriv_root(deriv_root)
     if mode == "raw":
         return Path(deriv_root) / subject / "baseline_only"
-    return Path(deriv_root) / subject / "baseline_only_normalized" / mode
+    return Path(deriv_root) / subject / "baseline_only_standardized" / mode
 
 def load_saved_session_frames(deriv_root, subject, session_id, mode):
     base_dir = get_baseline_dir(deriv_root, subject, mode)
@@ -523,7 +523,7 @@ def clip(cbv_data, bottom, top):
 # def high_pass(cbv_data, frame_rate = 2.5):
 #     if cbv_data.size > 0:
 #         nyquist = frame_rate / 2
-#         cutoff = 0.05 / nyquist  # Normalized cutoff frequency
+#         cutoff = 0.05 / nyquist  # Standardized cutoff frequency
 #         order = 4
 #         b, a = signal.butter(order, cutoff, btype='high', analog=False)
 #         cbv_data = signal.filtfilt(b, a, cbv_data, axis=0)  # Apply along time axis
@@ -743,7 +743,7 @@ def norm(data):
               Expected shape: [M, H, W] or similar (M frames, H height, W width).
     
     Returns:
-        normalized_data: Tensor/array of the same shape, normalized to [0, 1].
+        standardized_data: Tensor/array of the same shape, standardized to [0, 1].
     """
     # Convert to NumPy if input is PyTorch tensor for consistent handling
     is_torch = isinstance(data, torch.Tensor)
@@ -767,19 +767,19 @@ def norm(data):
         return torch.zeros_like(data) if is_torch else np.zeros_like(data)
 
     # Normalize to [0, 1]
-    normalized_data = (data_np - data_min) / (data_max - data_min)
+    standardized_data = (data_np - data_min) / (data_max - data_min)
 
     # Clip to [0, 1] to handle numerical precision issues
-    normalized_data = np.clip(normalized_data, 0, 1)
+    standardized_data = np.clip(standardized_data, 0, 1)
 
     # Convert back to PyTorch tensor if input was a tensor
     if is_torch:
-        normalized_data = torch.from_numpy(normalized_data).to(data.dtype)
+        standardized_data = torch.from_numpy(standardized_data).to(data.dtype)
 
-    # Debugging: Print min and max of normalized data
-    print(f"Normalized range: min={normalized_data.min():.6f}, max={normalized_data.max():.6f}")
+    # Debugging: Print min and max of standardized data
+    print(f"Standardized range: min={standardized_data.min():.6f}, max={standardized_data.max():.6f}")
 
-    return normalized_data
+    return standardized_data
 
 # Function to compute the frame difference --> this is to compute the difference in haemodynamic response from frame to frame
 def frame_diff(images: np.ndarray, mode: str = "window", window: int = 8) -> np.ndarray:
@@ -1236,7 +1236,7 @@ import numpy as np
 # # Function to create the pillbox kernel --> this is to create the pillbox kernel
 # def create_pillbox_kernel(radius: int):
 #     """
-#     Create a normalized 2D circular (pillbox) kernel.
+#     Create a standardized 2D circular (pillbox) kernel.
 #     """
 #     if radius < 0:
 #         raise ValueError("Radius must be >= 0")

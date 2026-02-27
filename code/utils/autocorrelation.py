@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from pathlib import Path
 from utils import helper_functions as hf
+from typing import Any, Dict, Iterable, Optional, Sequence
 
 deriv_root = None
 eda_root_name = "eda"
@@ -140,7 +141,7 @@ def session_global_signal(frames_3d):
     return x
 
 
-def normalized_acf(x, max_lag):
+def standardized_acf(x, max_lag):
     x = np.asarray(x, dtype=np.float64)
     if x.size < 2:
         return None, None
@@ -414,6 +415,352 @@ def save_value_map_csv(path, map_, value_col="value"):
         "x": xx.reshape(-1).astype(np.int32),
         value_col: flat,
     }).to_csv(path, index=False)
+
+
+class CorrelationAnalyzer:
+    """
+    Thin orchestration wrapper around correlation utilities in this module.
+
+    The class centralizes configuration, loading, and batch execution while
+    delegating all core math to pure functions (e.g. seed_temporal_corr_map).
+    """
+
+    def __init__(
+        self,
+        deriv_root_path: Optional[Path] = None,
+        eda_root_name_value: str = "eda",
+        acf_qc_filename_value: str = "acf_qc_summary.csv",
+        frame_diff_robust_pctl: Sequence[float] = (2.0, 98.0),
+        spatial_eps_value: float = 1e-8,
+        spatial_min_valid_samples_value: int = 8,
+    ):
+        configure(
+            deriv_root_path=deriv_root_path,
+            eda_root_name=eda_root_name_value,
+            acf_qc_filename=acf_qc_filename_value,
+            frame_diff_robust_pctl=frame_diff_robust_pctl,
+            spatial_eps=spatial_eps_value,
+            spatial_min_valid_samples=spatial_min_valid_samples_value,
+        )
+        if deriv_root_path is not None:
+            self.deriv_root = Path(deriv_root_path)
+        else:
+            self.deriv_root = _autodetect_deriv_root()
+        self.spatial_eps = float(spatial_eps_value)
+        self.spatial_min_valid_samples = int(spatial_min_valid_samples_value)
+
+    def _deriv_root_or_raise(self) -> Path:
+        if self.deriv_root is None:
+            self.deriv_root = _autodetect_deriv_root()
+        if self.deriv_root is None:
+            raise RuntimeError(
+                "Could not detect derivatives/preprocessing root. "
+                "Pass deriv_root_path to CorrelationAnalyzer(...)."
+            )
+        return Path(self.deriv_root)
+
+    def list_baseline_sessions(self, subject: str):
+        baseline_dir = self._deriv_root_or_raise() / str(subject) / "baseline_only"
+        return hf.load_all_baseline(str(baseline_dir))
+
+    def load_session_frames(self, subject: str, session_id: str, mode: str):
+        return load_saved_session_bundle(
+            self._deriv_root_or_raise(), subject, session_id, mode
+        )
+
+    def compute_seed_correlation(
+        self,
+        subject: str,
+        session_id: str,
+        mode: str,
+        seed_center_yx: Sequence[int],
+        seed_radius: int = 0,
+        eps: Optional[float] = None,
+        min_samples: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        if eps is None:
+            eps = self.spatial_eps
+        if min_samples is None:
+            min_samples = self.spatial_min_valid_samples
+
+        arr, metadata, source_path = self.load_session_frames(subject, session_id, mode)
+        corr_map, n_valid, seed_ts, seed_mask = seed_temporal_corr_map(
+            arr,
+            seed_center_yx=seed_center_yx,
+            seed_radius=seed_radius,
+            eps=eps,
+            min_samples=min_samples,
+        )
+        summary = self._seed_summary(
+            subject=subject,
+            session_id=session_id,
+            mode=mode,
+            arr=arr,
+            corr_map=corr_map,
+            n_valid=n_valid,
+            seed_ts=seed_ts,
+            seed_mask=seed_mask,
+            seed_center_yx=seed_center_yx,
+            seed_radius=seed_radius,
+            status="ok",
+            reason="",
+        )
+        return {
+            "frames": arr,
+            "metadata": metadata,
+            "source_path": source_path,
+            "corr_map": corr_map,
+            "n_valid": n_valid,
+            "seed_ts": seed_ts,
+            "seed_mask": seed_mask,
+            "summary": summary,
+        }
+
+    def run_seed_batch(
+        self,
+        subject: str,
+        analysis_modes: Iterable[str],
+        seed_center_yx: Sequence[int],
+        seed_radius: int = 0,
+        eps: Optional[float] = None,
+        min_samples: Optional[int] = None,
+        out_subdir: str = "autocorr_psd",
+        seed_subdir: str = "seed_corr",
+        save_maps: bool = True,
+        write_per_session_summary: bool = True,
+        write_batch_summary: bool = True,
+        require_qc: bool = False,
+    ) -> pd.DataFrame:
+        if eps is None:
+            eps = self.spatial_eps
+        if min_samples is None:
+            min_samples = self.spatial_min_valid_samples
+
+        sessions = self.list_baseline_sessions(subject)
+        out_root = analysis_subject_root(subject, out_subdir) / seed_subdir
+        out_per = out_root / "per_session"
+        out_per.mkdir(parents=True, exist_ok=True)
+
+        qc_map = load_acf_qc_map_for_subject(subject) if require_qc else {}
+        rows = []
+
+        for session in sessions:
+            session_id = str(session["session_id"])
+            for mode in analysis_modes:
+                summary_path = out_per / (
+                    f"{subject}_{session_id}_{mode}_seed_corr_summary.csv"
+                )
+
+                qc_ok, qc_reason = acf_qc_allows_session(
+                    qc_map,
+                    session_id=session_id,
+                    mode=mode,
+                    require_qc=require_qc,
+                )
+                if not qc_ok:
+                    row = self._seed_summary(
+                        subject=subject,
+                        session_id=session_id,
+                        mode=mode,
+                        arr=None,
+                        corr_map=None,
+                        n_valid=None,
+                        seed_ts=None,
+                        seed_mask=None,
+                        seed_center_yx=seed_center_yx,
+                        seed_radius=seed_radius,
+                        status="skipped",
+                        reason=qc_reason,
+                    )
+                    if write_per_session_summary:
+                        pd.DataFrame([row]).to_csv(summary_path, index=False)
+                    rows.append(row)
+                    continue
+
+                try:
+                    result = self.compute_seed_correlation(
+                        subject=subject,
+                        session_id=session_id,
+                        mode=mode,
+                        seed_center_yx=seed_center_yx,
+                        seed_radius=seed_radius,
+                        eps=eps,
+                        min_samples=min_samples,
+                    )
+                    row = dict(result["summary"])
+
+                    if save_maps:
+                        map_path = out_per / f"{subject}_{session_id}_{mode}_seed_corr.csv"
+                        save_value_map_csv(map_path, result["corr_map"], value_col="seed_corr")
+                        row["map_csv_path"] = str(map_path)
+                    else:
+                        row["map_csv_path"] = ""
+
+                    if write_per_session_summary:
+                        pd.DataFrame([row]).to_csv(summary_path, index=False)
+                    rows.append(row)
+                except Exception as e:
+                    row = self._seed_summary(
+                        subject=subject,
+                        session_id=session_id,
+                        mode=mode,
+                        arr=None,
+                        corr_map=None,
+                        n_valid=None,
+                        seed_ts=None,
+                        seed_mask=None,
+                        seed_center_yx=seed_center_yx,
+                        seed_radius=seed_radius,
+                        status="skipped",
+                        reason=str(e),
+                    )
+                    row["map_csv_path"] = ""
+                    if write_per_session_summary:
+                        pd.DataFrame([row]).to_csv(summary_path, index=False)
+                    rows.append(row)
+
+        df = pd.DataFrame(rows)
+        if write_batch_summary:
+            batch_path = out_root / f"{subject}_seed_corr_batch_summary.csv"
+            df.to_csv(batch_path, index=False)
+        return df
+
+    def run_seed_batch_for_subjects(
+        self,
+        subjects: Iterable[str],
+        analysis_modes: Iterable[str],
+        seed_center_yx: Sequence[int],
+        seed_radius: int = 0,
+        eps: Optional[float] = None,
+        min_samples: Optional[int] = None,
+        out_subdir: str = "autocorr_psd",
+        seed_subdir: str = "seed_corr",
+        save_maps: bool = True,
+        write_per_session_summary: bool = True,
+        write_batch_summary: bool = True,
+        require_qc: bool = False,
+        write_aggregate_summary: bool = True,
+    ) -> pd.DataFrame:
+        subject_dfs = []
+        for subject in subjects:
+            df_subject = self.run_seed_batch(
+                subject=subject,
+                analysis_modes=analysis_modes,
+                seed_center_yx=seed_center_yx,
+                seed_radius=seed_radius,
+                eps=eps,
+                min_samples=min_samples,
+                out_subdir=out_subdir,
+                seed_subdir=seed_subdir,
+                save_maps=save_maps,
+                write_per_session_summary=write_per_session_summary,
+                write_batch_summary=write_batch_summary,
+                require_qc=require_qc,
+            )
+            if len(df_subject) > 0:
+                subject_dfs.append(df_subject)
+
+        if len(subject_dfs) == 0:
+            return pd.DataFrame()
+
+        df_all = pd.concat(subject_dfs, ignore_index=True)
+        if write_aggregate_summary:
+            out_root = (
+                self._deriv_root_or_raise()
+                / "aggregate"
+                / str(eda_root_name)
+                / out_subdir
+                / seed_subdir
+            )
+            out_root.mkdir(parents=True, exist_ok=True)
+            df_all.to_csv(out_root / "seed_corr_all_subjects_summary.csv", index=False)
+        return df_all
+
+    @staticmethod
+    def _seed_summary(
+        subject: str,
+        session_id: str,
+        mode: str,
+        arr,
+        corr_map,
+        n_valid,
+        seed_ts,
+        seed_mask,
+        seed_center_yx: Sequence[int],
+        seed_radius: int,
+        status: str,
+        reason: str,
+    ) -> Dict[str, Any]:
+        row = {
+            "subject": subject,
+            "session_id": str(session_id),
+            "mode": str(mode),
+            "status": str(status),
+            "reason": str(reason),
+            "seed_y": int(seed_center_yx[0]),
+            "seed_x": int(seed_center_yx[1]),
+            "seed_radius": int(seed_radius),
+            "seed_kind": "pixel" if int(seed_radius) == 0 else "patch",
+            "n_frames": np.nan,
+            "height": np.nan,
+            "width": np.nan,
+            "seed_n_pixels": np.nan,
+            "n_pixels_total": np.nan,
+            "n_pixels_finite": np.nan,
+            "finite_fraction": np.nan,
+            "mean_corr": np.nan,
+            "median_corr": np.nan,
+            "positive_fraction": np.nan,
+            "std_corr": np.nan,
+            "min_corr": np.nan,
+            "max_corr": np.nan,
+            "mean_n_valid": np.nan,
+            "min_n_valid": np.nan,
+            "max_n_valid": np.nan,
+            "seed_ts_mean": np.nan,
+            "seed_ts_std": np.nan,
+            "seed_ts_n_finite": np.nan,
+        }
+        if arr is None or corr_map is None or n_valid is None or seed_ts is None or seed_mask is None:
+            return row
+
+        finite = np.isfinite(corr_map)
+        finite_corr_vals = corr_map[finite]
+        n_total = int(corr_map.size)
+        n_finite = int(np.sum(finite))
+        n_valid_pos = n_valid[n_valid > 0]
+        seed_ts_finite = seed_ts[np.isfinite(seed_ts)]
+
+        row.update(
+            {
+                "n_frames": int(arr.shape[0]),
+                "height": int(arr.shape[1]),
+                "width": int(arr.shape[2]),
+                "seed_n_pixels": int(np.sum(seed_mask)),
+                "n_pixels_total": n_total,
+                "n_pixels_finite": n_finite,
+                "finite_fraction": float(n_finite / n_total) if n_total > 0 else np.nan,
+                "mean_corr": float(np.nanmean(corr_map)) if n_finite > 0 else np.nan,
+                "median_corr": float(np.median(finite_corr_vals)) if n_finite > 0 else np.nan,
+                "positive_fraction": float(np.mean(finite_corr_vals > 0.0))
+                if n_finite > 0
+                else np.nan,
+                "std_corr": float(np.nanstd(corr_map)) if n_finite > 0 else np.nan,
+                "min_corr": float(np.nanmin(corr_map)) if n_finite > 0 else np.nan,
+                "max_corr": float(np.nanmax(corr_map)) if n_finite > 0 else np.nan,
+                "mean_n_valid": float(np.mean(n_valid_pos)) if n_valid_pos.size > 0 else np.nan,
+                "min_n_valid": int(np.min(n_valid_pos)) if n_valid_pos.size > 0 else 0,
+                "max_n_valid": int(np.max(n_valid_pos)) if n_valid_pos.size > 0 else 0,
+                "seed_ts_mean": float(np.mean(seed_ts_finite))
+                if seed_ts_finite.size > 0
+                else np.nan,
+                "seed_ts_std": float(np.std(seed_ts_finite))
+                if seed_ts_finite.size > 0
+                else np.nan,
+                "seed_ts_n_finite": int(seed_ts_finite.size),
+            }
+        )
+        return row
 
 
 # Backward-compatible aliases used in older notebook cells.
