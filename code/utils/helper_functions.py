@@ -7,11 +7,16 @@ import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.io
-import torch
-import torch.nn.functional as F
 from matplotlib.path import Path as MatplotlibPath
 from scipy import ndimage as ndi
 from scipy import signal
+
+try:
+    import torch
+    import torch.nn.functional as F
+except Exception:
+    torch = None
+    F = None
 
 """
 Author: Brynn Harris-Shanks, 2026
@@ -80,6 +85,10 @@ def squeeze_frames(frames):
     if arr.ndim == 4 and arr.shape[1] == 1:
         return arr[:, 0, :, :]
     raise ValueError(f"Unsupported frame shape: {arr.shape}; expected [T,H,W] or [T,1,H,W]")
+
+
+def _is_torch_tensor(x):
+    return (torch is not None) and isinstance(x, torch.Tensor)
 
 def load_saved_baseline_sessions(base_dir):
     sessions = []
@@ -746,7 +755,7 @@ def norm(data):
         standardized_data: Tensor/array of the same shape, standardized to [0, 1].
     """
     # Convert to NumPy if input is PyTorch tensor for consistent handling
-    is_torch = isinstance(data, torch.Tensor)
+    is_torch = _is_torch_tensor(data)
     if is_torch:
         data_np = data.cpu().numpy()
     else:
@@ -774,7 +783,10 @@ def norm(data):
 
     # Convert back to PyTorch tensor if input was a tensor
     if is_torch:
-        standardized_data = torch.from_numpy(standardized_data).to(data.dtype)
+        standardized_data = torch.from_numpy(standardized_data).to(
+            device=data.device,
+            dtype=data.dtype,
+        )
 
     # Debugging: Print min and max of standardized data
     print(f"Standardized range: min={standardized_data.min():.6f}, max={standardized_data.max():.6f}")
@@ -839,43 +851,59 @@ def tensor_pad_or_crop(cbv_data, target_size: int = 112):
     torch.Tensor
         Shape (N_images, 1, target_size, target_size), float32
     """
-    if not isinstance(cbv_data, torch.Tensor):
-        cbv_tensor = torch.from_numpy(cbv_data)
-    else:
-        cbv_tensor = cbv_data
-        
-    # Ensure channel dimension exists: (N, H, 128) → (N, 1, H, 128)
-    if cbv_tensor.dim() == 3:
-        cbv_tensor = cbv_tensor.unsqueeze(1)
-    # Now shape is (N, 1, H_var, 128)
+    target = int(target_size)
 
-    N, C, H, W = cbv_tensor.shape
-    target = target_size
-    
-    if H == target:
-        # Already perfect size in height
-        if W != target:
-            # This should never happen in your case (W is always 128), but we fix it anyway
-            cbv_tensor = F.pad(cbv_tensor, (0, target - W, 0, 0)) if W < target else cbv_tensor[:, :, :, :target]
+    if _is_torch_tensor(cbv_data):
+        cbv_tensor = cbv_data
+
+        # Ensure channel dimension exists: (N, H, W) -> (N, 1, H, W)
+        if cbv_tensor.dim() == 3:
+            cbv_tensor = cbv_tensor.unsqueeze(1)
+
+        _, _, H, W = cbv_tensor.shape
+
+        if H == target:
+            if W != target:
+                cbv_tensor = (
+                    F.pad(cbv_tensor, (0, target - W, 0, 0))
+                    if W < target
+                    else cbv_tensor[:, :, :, :target]
+                )
+            return cbv_tensor.float()
+
+        if H < target:
+            pad_bottom = target - H
+            cbv_tensor = F.pad(cbv_tensor, (0, 0, 0, pad_bottom), mode="constant", value=0)
+        else:
+            cbv_tensor = cbv_tensor[:, :, :target, :]
+
+        if W < target:
+            pad_right = target - W
+            cbv_tensor = F.pad(cbv_tensor, (0, pad_right, 0, 0), mode="constant", value=0)
+        elif W > target:
+            cbv_tensor = cbv_tensor[:, :, :, :target]
+
         return cbv_tensor.float()
-    
-    # Height handling
+
+    cbv_np = np.asarray(cbv_data)
+    if cbv_np.ndim == 3:
+        cbv_np = cbv_np[:, np.newaxis, :, :]
+    elif cbv_np.ndim != 4:
+        raise ValueError(f"Expected shape (N,H,W) or (N,1,H,W), got {cbv_np.shape}")
+
+    _, _, H, W = cbv_np.shape
+
     if H < target:
-        # Pad bottom with zeros
-        pad_bottom = target - H
-        cbv_tensor = F.pad(cbv_tensor, (0, 0, 0, pad_bottom), mode='constant', value=0)
-    else:
-        # Crop bottom part
-        cbv_tensor = cbv_tensor[:, :, :target, :]
-    
-    # Width handling (in case someone changes the probe)
+        cbv_np = np.pad(cbv_np, ((0, 0), (0, 0), (0, target - H), (0, 0)), mode="constant")
+    elif H > target:
+        cbv_np = cbv_np[:, :, :target, :]
+
     if W < target:
-        pad_right = target - W
-        cbv_tensor = F.pad(cbv_tensor, (0, pad_right, 0, 0), mode='constant', value=0)
+        cbv_np = np.pad(cbv_np, ((0, 0), (0, 0), (0, 0), (0, target - W)), mode="constant")
     elif W > target:
-        cbv_tensor = cbv_tensor[:, :, :, :target]
-    
-    return cbv_tensor.float()
+        cbv_np = cbv_np[:, :, :, :target]
+
+    return cbv_np.astype(np.float32, copy=False)
 
 import numpy as np
 
