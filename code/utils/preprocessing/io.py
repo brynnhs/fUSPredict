@@ -537,8 +537,15 @@ def process_all_baseline_files(
     return saved_paths
 
 
-def _derive_session_id_from_path(path: Path) -> str:
-    stem = path.stem
+def derive_session_id_from_path(path: str | os.PathLike[str]) -> str:
+    """
+    Derive session_id from baseline stage filename.
+
+    Handles:
+      - baseline_<session>_<known_stage>.npz
+      - baseline_<session>.npz
+    """
+    stem = Path(path).stem
     if stem.startswith("baseline_"):
         stem = stem[len("baseline_") :]
     for stage_suffix in KNOWN_STAGE_SUFFIXES:
@@ -564,7 +571,7 @@ def load_baseline_session(baseline_path: str | os.PathLike[str]) -> dict[str, An
         except (TypeError, ValueError):
             original_indices_arr = np.asarray(original_indices)
 
-    session_id = str(meta.get("session_id") or _derive_session_id_from_path(path))
+    session_id = str(meta.get("session_id") or derive_session_id_from_path(path))
     return {
         "frames": np.asarray(frames),
         "session_id": session_id,
