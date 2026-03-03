@@ -2,6 +2,7 @@ import glob
 import os
 import random
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 import matplotlib.pyplot as plt
@@ -89,6 +90,286 @@ def squeeze_frames(frames):
 
 def _is_torch_tensor(x):
     return (torch is not None) and isinstance(x, torch.Tensor)
+
+
+def _validate_panels(panels, labels, signed):
+    if not isinstance(panels, list) or len(panels) < 2:
+        raise ValueError("panels must be a list with length >= 2.")
+    if not isinstance(labels, list) or len(labels) != len(panels):
+        raise ValueError("labels must be a list with the same length as panels.")
+
+    arrays = []
+    shapes = []
+    for idx, panel in enumerate(panels):
+        arr = np.asarray(panel)
+        if not np.issubdtype(arr.dtype, np.number):
+            raise ValueError(f"panel[{idx}] must be numeric, got dtype={arr.dtype!r}.")
+        if arr.ndim != 3:
+            raise ValueError(f"panel[{idx}] must have shape (T,H,W), got {arr.shape}.")
+        arrays.append(arr.astype(np.float32, copy=False))
+        shapes.append(arr.shape)
+
+    h0, w0 = arrays[0].shape[1], arrays[0].shape[2]
+    mismatch = [s for s in shapes if (s[1], s[2]) != (h0, w0)]
+    if mismatch:
+        raise ValueError(
+            "All panels must share spatial shape (H,W). "
+            f"Got shapes: {shapes}"
+        )
+
+    if signed is None:
+        signed_flags = [False] * len(panels)
+    else:
+        if not isinstance(signed, list) or len(signed) != len(panels):
+            raise ValueError("signed must be None or a list[bool] with one entry per panel.")
+        signed_flags = [bool(v) for v in signed]
+
+    return arrays, signed_flags, shapes, int(h0), int(w0)
+
+
+def _compute_limits_unsigned(frames, q_low=1.0, q_high=99.0):
+    arr = np.asarray(frames, dtype=np.float32)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return 0.0, 1.0
+
+    vmin = float(np.percentile(finite, q_low))
+    vmax = float(np.percentile(finite, q_high))
+    if (not np.isfinite(vmin)) or (not np.isfinite(vmax)) or (vmax <= vmin):
+        vmin = float(np.min(finite))
+        vmax = float(np.max(finite))
+    if (not np.isfinite(vmin)) or (not np.isfinite(vmax)) or (vmax <= vmin):
+        return 0.0, 1.0
+    return vmin, vmax
+
+
+def _compute_limit_signed(frames, abs_percentile=97.0):
+    arr = np.asarray(frames, dtype=np.float32)
+    finite = arr[np.isfinite(arr)]
+    if finite.size == 0:
+        return 1.0
+
+    a = float(np.percentile(np.abs(finite), abs_percentile))
+    if (not np.isfinite(a)) or (a <= 1e-8):
+        a = float(np.max(np.abs(finite)))
+    if (not np.isfinite(a)) or (a <= 1e-8):
+        return 1.0
+    return a
+
+
+def _to_u8_unsigned(frame, vmin, vmax):
+    arr = np.asarray(frame, dtype=np.float32)
+    safe = np.where(np.isfinite(arr), arr, float(vmin))
+    scaled = (np.clip(safe, float(vmin), float(vmax)) - float(vmin)) / (
+        float(vmax) - float(vmin) + 1e-8
+    )
+    return np.clip(scaled * 255.0, 0.0, 255.0).astype(np.uint8)
+
+
+def _to_u8_signed(frame, a):
+    arr = np.asarray(frame, dtype=np.float32)
+    safe = np.where(np.isfinite(arr), arr, 0.0)
+    clipped = np.clip(safe, -float(a), float(a))
+    scaled = ((clipped / (float(a) + 1e-8)) + 1.0) * 127.5
+    return np.clip(scaled, 0.0, 255.0).astype(np.uint8)
+
+
+def _add_header(panel_gray, text, *, header_height=28, font_scale=0.5, cv2_module=None):
+    if cv2_module is None:
+        raise ValueError("cv2_module must be provided.")
+    gray = np.asarray(panel_gray, dtype=np.uint8)
+    if gray.ndim != 2:
+        raise ValueError(f"_add_header expects a 2D grayscale panel, got shape {gray.shape}")
+
+    panel_bgr = cv2_module.cvtColor(gray, cv2_module.COLOR_GRAY2BGR)
+    h, w = panel_bgr.shape[:2]
+    out = np.zeros((h + int(header_height), w, 3), dtype=np.uint8)
+    out[: int(header_height)] = (0, 0, 0)
+    out[int(header_height) :] = panel_bgr
+    cv2_module.putText(
+        out,
+        str(text),
+        (8, int(header_height * 0.72)),
+        cv2_module.FONT_HERSHEY_SIMPLEX,
+        float(font_scale),
+        (0, 255, 0),
+        1,
+        cv2_module.LINE_AA,
+    )
+    return out
+
+
+def _select_frame_indices(t_used):
+    return np.arange(int(t_used), dtype=np.int64)
+
+
+def make_conjoined_video(
+    panels,
+    labels,
+    out_path,
+    *,
+    fps,
+    n_frames=None,
+    align_mode="trim",
+    scaling_mode="shared_from_first",
+    q_low=1.0,
+    q_high=99.0,
+    signed=None,
+    signed_abs_percentile=97.0,
+    header_height=28,
+    font_scale=0.5,
+    panel_gap_px=0,
+    blur_ksize=0,
+    codec="mp4v",
+):
+    """
+    Write a horizontally conjoined MP4 video from multiple (T,H,W) panels.
+
+    Examples
+    --------
+    # before/after filtering
+    # make_conjoined_video([before_frames, after_frames], ["before", "filtered"], out_path, fps=10.0, panel_gap_px=2)
+
+    # raw/mean_divide/zscore
+    # make_conjoined_video([raw, mean_div, z], ["raw", "mean_divide", "zscore"], out_path, fps=10.0, signed=[False, True, True])
+    """
+    try:
+        import cv2
+    except Exception as exc:
+        raise ImportError(
+            "make_conjoined_video requires OpenCV. Install with `pip install opencv-python`."
+        ) from exc
+
+    arrays, signed_flags, shapes, h, w = _validate_panels(panels, labels, signed)
+    n_panels = len(arrays)
+
+    if not np.isfinite(float(fps)) or float(fps) <= 0:
+        raise ValueError(f"fps must be finite and > 0, got {fps!r}")
+    if align_mode != "trim":
+        raise ValueError(f"Unsupported align_mode={align_mode!r}. Only 'trim' is supported.")
+    if scaling_mode not in {"shared_from_first", "per_panel"}:
+        raise ValueError(
+            f"Unsupported scaling_mode={scaling_mode!r}. "
+            "Expected 'shared_from_first' or 'per_panel'."
+        )
+    if not (0.0 <= float(q_low) < float(q_high) <= 100.0):
+        raise ValueError(f"Expected 0 <= q_low < q_high <= 100, got {q_low}, {q_high}")
+    if not (0.0 < float(signed_abs_percentile) <= 100.0):
+        raise ValueError(
+            f"signed_abs_percentile must be in (0,100], got {signed_abs_percentile}"
+        )
+    if int(header_height) < 0:
+        raise ValueError(f"header_height must be >= 0, got {header_height}")
+    if float(font_scale) <= 0:
+        raise ValueError(f"font_scale must be > 0, got {font_scale}")
+    if not isinstance(panel_gap_px, (int, np.integer)) or int(panel_gap_px) < 0:
+        raise ValueError(f"panel_gap_px must be an integer >= 0, got {panel_gap_px!r}")
+
+    blur_k = int(blur_ksize)
+    gap_px = int(panel_gap_px)
+    if blur_k > 1 and (blur_k < 3 or (blur_k % 2 == 0)):
+        raise ValueError("blur_ksize must be 0/1 (disabled) or an odd integer >= 3.")
+
+    t_used = min(int(s[0]) for s in shapes)
+    if n_frames is not None:
+        if not isinstance(n_frames, (int, np.integer)) or int(n_frames) <= 0:
+            raise ValueError(f"n_frames must be a positive int when provided, got {n_frames!r}")
+        t_used = min(int(t_used), int(n_frames))
+    if t_used < 1:
+        raise ValueError("T_used is 0 after alignment; cannot write an empty video.")
+
+    trimmed = [arr[:t_used].astype(np.float32, copy=False) for arr in arrays]
+
+    panel_limits = []
+    if scaling_mode == "shared_from_first":
+        if signed_flags[0]:
+            shared_a = _compute_limit_signed(trimmed[0], abs_percentile=signed_abs_percentile)
+            shared_vmin, shared_vmax = -shared_a, shared_a
+        else:
+            shared_vmin, shared_vmax = _compute_limits_unsigned(
+                trimmed[0], q_low=q_low, q_high=q_high
+            )
+            shared_a = max(abs(shared_vmin), abs(shared_vmax))
+            if shared_a <= 1e-8 or not np.isfinite(shared_a):
+                shared_a = 1.0
+
+        for is_signed in signed_flags:
+            if is_signed:
+                panel_limits.append(("signed", float(shared_a)))
+            else:
+                panel_limits.append(("unsigned", float(shared_vmin), float(shared_vmax)))
+    else:
+        for arr, is_signed in zip(trimmed, signed_flags):
+            if is_signed:
+                a = _compute_limit_signed(arr, abs_percentile=signed_abs_percentile)
+                panel_limits.append(("signed", float(a)))
+            else:
+                vmin, vmax = _compute_limits_unsigned(arr, q_low=q_low, q_high=q_high)
+                panel_limits.append(("unsigned", float(vmin), float(vmax)))
+
+    out_path_obj = Path(out_path)
+    out_path_obj.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = out_path_obj.with_suffix(".tmp.mp4")
+    if tmp_path.exists():
+        tmp_path.unlink()
+
+    fourcc = cv2.VideoWriter_fourcc(*str(codec))
+    writer = cv2.VideoWriter(
+        str(tmp_path),
+        fourcc,
+        float(fps),
+        (int(w * n_panels + gap_px * max(0, n_panels - 1)), int(h + int(header_height))),
+        isColor=True,
+    )
+    if not writer.isOpened():
+        raise RuntimeError(f"Could not open video writer for {out_path_obj}")
+
+    frame_idxs = _select_frame_indices(t_used)
+    try:
+        for t in frame_idxs:
+            frame_panels = []
+            for i, arr in enumerate(trimmed):
+                limit = panel_limits[i]
+                if limit[0] == "signed":
+                    gray = _to_u8_signed(arr[int(t)], limit[1])
+                else:
+                    gray = _to_u8_unsigned(arr[int(t)], limit[1], limit[2])
+
+                if blur_k >= 3:
+                    gray = cv2.GaussianBlur(gray, (blur_k, blur_k), 0)
+
+                panel_bgr = _add_header(
+                    gray,
+                    labels[i],
+                    header_height=int(header_height),
+                    font_scale=float(font_scale),
+                    cv2_module=cv2,
+                )
+                frame_panels.append(panel_bgr)
+                if gap_px > 0 and i < (n_panels - 1):
+                    frame_panels.append(
+                        np.zeros((int(h + int(header_height)), gap_px, 3), dtype=np.uint8)
+                    )
+
+            conjoined = np.concatenate(frame_panels, axis=1)
+            writer.write(conjoined)
+    except Exception:
+        writer.release()
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+    finally:
+        writer.release()
+
+    os.replace(tmp_path, out_path_obj)
+    return {
+        "out_path": str(out_path_obj),
+        "fps": float(fps),
+        "T_used": int(t_used),
+        "H": int(h),
+        "W": int(w),
+        "n_panels": int(n_panels),
+    }
 
 def load_saved_baseline_sessions(base_dir):
     sessions = []
@@ -528,15 +809,15 @@ def clip(cbv_data, bottom, top):
 #     )
 #     return resized_cbv
 
-# # Function to apply a high pass filter to the %CBV data --> this is to remove low frequency noise
-# def high_pass(cbv_data, frame_rate = 2.5):
-#     if cbv_data.size > 0:
-#         nyquist = frame_rate / 2
-#         cutoff = 0.05 / nyquist  # Standardized cutoff frequency
-#         order = 4
-#         b, a = signal.butter(order, cutoff, btype='high', analog=False)
-#         cbv_data = signal.filtfilt(b, a, cbv_data, axis=0)  # Apply along time axis
-#     return cbv_data
+# Function to apply a high pass filter to the %CBV data --> this is to remove low frequency noise
+def high_pass(cbv_data, frame_rate = 2.5):
+    if cbv_data.size > 0:
+        nyquist = frame_rate / 2
+        cutoff = 0.05 / nyquist  # Standardized cutoff frequency
+        order = 4
+        b, a = signal.butter(order, cutoff, btype='high', analog=False)
+        cbv_data = signal.filtfilt(b, a, cbv_data, axis=0)  # Apply along time axis
+    return cbv_data
 
 # Function to get the height and width of the %CBV data --> this is to resize the %CBV data to the target size
 # def height_width_matfile(mat_files):
