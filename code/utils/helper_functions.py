@@ -371,18 +371,32 @@ def make_conjoined_video(
         "n_panels": int(n_panels),
     }
 
+CONDITION_UNFILTERED = "unfiltered"
+CONDITION_FILTERED = "filtered"
+
+
+def _normalize_condition(condition):
+    if condition is None:
+        return CONDITION_UNFILTERED
+    cond = str(condition).strip().lower()
+    if cond == CONDITION_UNFILTERED:
+        return CONDITION_UNFILTERED
+    if cond == CONDITION_FILTERED:
+        return CONDITION_FILTERED
+    raise ValueError(
+        f"Unsupported condition={condition!r}; expected '{CONDITION_UNFILTERED}' or '{CONDITION_FILTERED}'."
+    )
+
+
 def load_saved_baseline_sessions(base_dir):
+    from utils.preprocessing.io import load_baseline_session as _stage_load_baseline_session
+
     sessions = []
     resolved_dir, baseline_files = _resolve_baseline_dir_with_files(base_dir)
     for p in baseline_files:
         try:
-            d = np.load(p, allow_pickle=False)
-            sess = {
-                "frames": d["frames"].astype(np.float32, copy=False),
-                "session_id": str(d["session_id"]),
-                "original_indices": d["original_indices"] if "original_indices" in d.files else None,
-                "metadata": {k: d[k] for k in d.files if k not in ["frames", "session_id", "original_indices"]},
-            }
+            sess = _stage_load_baseline_session(p)
+            sess["frames"] = np.asarray(sess["frames"], dtype=np.float32, copy=False)
             sessions.append(sess)
         except Exception as e:
             print(f"Error loading {p.name}: {e}")
@@ -390,28 +404,77 @@ def load_saved_baseline_sessions(base_dir):
         print(f"WARNING: No baseline_*.npz files found in {resolved_dir}")
     return sessions
 
-def get_baseline_dir(deriv_root, subject, mode):
+
+def get_baseline_dir(deriv_root, subject, mode, condition=None):
     deriv_root = _resolve_deriv_root(deriv_root)
+    cond = _normalize_condition(condition)
+    mode = str(mode)
+
     if mode == "raw":
-        return Path(deriv_root) / subject / "baseline_only"
-    return Path(deriv_root) / subject / "baseline_only_standardized" / mode
+        if cond == CONDITION_FILTERED:
+            return Path(deriv_root) / subject / "baseline_only_filtered"
+        return Path(deriv_root) / subject / "baseline_only_reoriented_resized"
 
-def load_saved_session_frames(deriv_root, subject, session_id, mode):
-    base_dir = get_baseline_dir(deriv_root, subject, mode)
+    if mode in {"mean_divide", "zscore"}:
+        return Path(deriv_root) / subject / "baseline_only_standardized"
+
+    raise ValueError(f"Unsupported mode={mode!r}; expected 'raw', 'mean_divide', or 'zscore'.")
+
+
+def _candidate_session_paths(deriv_root, subject, session_id, mode, condition=None):
+    deriv_root = _resolve_deriv_root(deriv_root)
+    base = Path(deriv_root) / str(subject)
+    sid = str(session_id)
+    mode = str(mode)
+    cond = _normalize_condition(condition)
+
+    candidates = []
     if mode == "raw":
-        fp = base_dir / f"baseline_{session_id}.npz"
-    else:
-        fp = base_dir / f"baseline_{session_id}_{mode}.npz"
+        if cond == CONDITION_FILTERED:
+            candidates.append(base / "baseline_only_filtered" / f"baseline_{sid}_filtered.npz")
+        else:
+            candidates.append(
+                base / "baseline_only_reoriented_resized" / f"baseline_{sid}_reoriented_resized.npz"
+            )
+        # Legacy fallbacks
+        candidates.append(base / "baseline_only" / f"baseline_{sid}.npz")
+        candidates.append(base / "baseline_only" / f"baseline_{sid}_baseline_extracted.npz")
+        return candidates
 
-    if not fp.exists():
-        raise FileNotFoundError(
-            f"Missing saved baseline file for subject={subject}, session={session_id}, mode={mode}: {fp}"
-        )
+    if mode not in {"mean_divide", "zscore"}:
+        raise ValueError(f"Unsupported mode={mode!r}; expected 'raw', 'mean_divide', or 'zscore'.")
 
-    with np.load(fp, allow_pickle=False) as data:
-        if "frames" not in data.files:
-            raise KeyError(f"'frames' missing in {fp}")
-        return data["frames"].astype(np.float32, copy=False)
+    stage = "standardized_mean_divide" if mode == "mean_divide" else "standardized_zscore"
+    candidates.append(base / "baseline_only_standardized" / f"baseline_{sid}_{cond}_{stage}.npz")
+    # Legacy fallbacks
+    candidates.append(base / "baseline_only_standardized" / f"baseline_{sid}_{mode}.npz")
+    candidates.append(base / "baseline_only_standardized" / f"baseline_{sid}_{stage}.npz")
+    candidates.append(base / "baseline_only_standardized" / mode / f"baseline_{sid}_{mode}.npz")
+    return candidates
+
+
+def load_saved_session_frames(deriv_root, subject, session_id, mode, condition=None):
+    from utils.preprocessing.io import load_stage_npz
+
+    candidates = _candidate_session_paths(
+        deriv_root=deriv_root,
+        subject=subject,
+        session_id=session_id,
+        mode=mode,
+        condition=condition,
+    )
+    for fp in candidates:
+        if not fp.exists():
+            continue
+        frames, _ = load_stage_npz(str(fp))
+        return np.asarray(frames, dtype=np.float32, copy=False)
+
+    tried = "\n  - ".join(str(p) for p in candidates)
+    raise FileNotFoundError(
+        "Missing saved baseline file for "
+        f"subject={subject}, session={session_id}, mode={mode}, "
+        f"condition={_normalize_condition(condition)}. Tried:\n  - {tried}"
+    )
     
 # Function to extract and save the baseline frames --> for fUS Predict baseline
 def extract_baseline_frames_from_mat(mat_dict):
@@ -591,42 +654,22 @@ def process_all_baseline_files(data_directory, output_dir):
 
 def load_baseline_session(baseline_path):
     """
-    Load a single session's baseline data.
-    
-    Returns:
-        dict with 'frames' (T, H, W) and metadata
+    Load a single session's baseline data from stage-schema or legacy NPZ.
     """
-    data = np.load(baseline_path, allow_pickle=False)
-    return {
-        'frames': data['frames'],  # (T, H, W)
-        'session_id': str(data['session_id']),
-        'original_indices': data['original_indices'],
-        'metadata': {k: data[k] for k in data.files if k not in ['frames', 'original_indices', 'session_id']}
-    }
+    from utils.preprocessing.io import load_baseline_session as _stage_load_baseline_session
+
+    sess = _stage_load_baseline_session(baseline_path)
+    sess["frames"] = np.asarray(sess["frames"], dtype=np.float32, copy=False)
+    return sess
+
 
 def load_all_baseline(baseline_dir):
     """
-    Load all baseline sessions.
-    
-    Returns:
-        List of dicts, each containing a session's baseline data
+    Load all baseline sessions from stage-schema or legacy NPZ files.
     """
-    resolved_dir, baseline_files = _resolve_baseline_dir_with_files(baseline_dir)
-
-    if len(baseline_files) == 0:
-        print(f"WARNING: No baseline_*.npz files found in {resolved_dir}")
-        return []
-
-    all_sessions = []
-    for path in baseline_files:
-        try:
-            session_data = load_baseline_session(path)
-            all_sessions.append(session_data)
-        except Exception as e:
-            print(f"Error loading {os.path.basename(path)}: {e}")
-
-    print(f"Loaded {len(all_sessions)} baseline sessions")
-    return all_sessions
+    sessions = load_saved_baseline_sessions(baseline_dir)
+    print(f"Loaded {len(sessions)} baseline sessions")
+    return sessions
 
 # Function to plot raw fUS intensity over time with label shading
 def plot_fus_timecourse_with_labels(

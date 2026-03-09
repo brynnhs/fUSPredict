@@ -80,24 +80,51 @@ def analysis_subject_root(subject, subdir):
     return root
 
 
-def baseline_npz_path(deriv_root, subject, session_id, mode):
-    base_dir = hf.get_baseline_dir(deriv_root, subject, mode)
-    if mode == "raw":
-        return base_dir / f"baseline_{session_id}.npz"
-    return base_dir / f"baseline_{session_id}_{mode}.npz"
+def baseline_npz_path(deriv_root, subject, session_id, mode, condition=None):
+    candidates = hf._candidate_session_paths(
+        deriv_root=deriv_root,
+        subject=subject,
+        session_id=session_id,
+        mode=mode,
+        condition=condition,
+    )
+    for fp in candidates:
+        if fp.exists():
+            return fp
+    return candidates[0]
 
 
-def load_saved_session_bundle(deriv_root, subject, session_id, mode):
-    fp = baseline_npz_path(deriv_root, subject, session_id, mode)
+def load_saved_session_bundle(deriv_root, subject, session_id, mode, condition=None):
+    from utils.preprocessing.io import load_stage_npz
+
+    fp = baseline_npz_path(
+        deriv_root=deriv_root,
+        subject=subject,
+        session_id=session_id,
+        mode=mode,
+        condition=condition,
+    )
     if not fp.exists():
-        raise FileNotFoundError(f"Missing saved baseline file: {fp}")
+        tried = "\n  - ".join(str(p) for p in hf._candidate_session_paths(
+            deriv_root=deriv_root,
+            subject=subject,
+            session_id=session_id,
+            mode=mode,
+            condition=condition,
+        ))
+        raise FileNotFoundError(
+            "Missing saved baseline file for "
+            f"subject={subject}, session={session_id}, mode={mode}, "
+            f"condition={hf._normalize_condition(condition)}. Tried:\n  - {tried}"
+        )
 
-    with np.load(fp, allow_pickle=False) as data:
-        if "frames" not in data.files:
-            raise KeyError(f"'frames' missing in {fp}")
-        frames = np.asarray(data["frames"], dtype=np.float32)
-        metadata = {k: data[k] for k in data.files if k != "frames"}
-    return hf.squeeze_frames(frames).astype(np.float32, copy=False), metadata, fp
+    frames, metadata = load_stage_npz(str(fp))
+    return hf.squeeze_frames(np.asarray(frames, dtype=np.float32)).astype(np.float32, copy=False), metadata, fp
+
+
+def squeeze_frames(frames):
+    """Backward-compatible alias kept for notebook call sites."""
+    return hf.squeeze_frames(frames)
 
 
 def finite_values(a):
@@ -463,9 +490,15 @@ class CorrelationAnalyzer:
         baseline_dir = self._deriv_root_or_raise() / str(subject) / "baseline_only"
         return hf.load_all_baseline(str(baseline_dir))
 
-    def load_session_frames(self, subject: str, session_id: str, mode: str):
+    def load_session_frames(
+        self,
+        subject: str,
+        session_id: str,
+        mode: str,
+        condition: Optional[str] = None,
+    ):
         return load_saved_session_bundle(
-            self._deriv_root_or_raise(), subject, session_id, mode
+            self._deriv_root_or_raise(), subject, session_id, mode, condition=condition
         )
 
     def compute_seed_correlation(
@@ -474,6 +507,7 @@ class CorrelationAnalyzer:
         session_id: str,
         mode: str,
         seed_center_yx: Sequence[int],
+        condition: Optional[str] = None,
         seed_radius: int = 0,
         eps: Optional[float] = None,
         min_samples: Optional[int] = None,
@@ -483,7 +517,9 @@ class CorrelationAnalyzer:
         if min_samples is None:
             min_samples = self.spatial_min_valid_samples
 
-        arr, metadata, source_path = self.load_session_frames(subject, session_id, mode)
+        arr, metadata, source_path = self.load_session_frames(
+            subject, session_id, mode, condition=condition
+        )
         corr_map, n_valid, seed_ts, seed_mask = seed_temporal_corr_map(
             arr,
             seed_center_yx=seed_center_yx,
@@ -495,6 +531,7 @@ class CorrelationAnalyzer:
             subject=subject,
             session_id=session_id,
             mode=mode,
+            condition=condition,
             arr=arr,
             corr_map=corr_map,
             n_valid=n_valid,
@@ -521,6 +558,7 @@ class CorrelationAnalyzer:
         subject: str,
         analysis_modes: Iterable[str],
         seed_center_yx: Sequence[int],
+        condition: Optional[str] = None,
         seed_radius: int = 0,
         eps: Optional[float] = None,
         min_samples: Optional[int] = None,
@@ -562,6 +600,7 @@ class CorrelationAnalyzer:
                         subject=subject,
                         session_id=session_id,
                         mode=mode,
+                        condition=condition,
                         arr=None,
                         corr_map=None,
                         n_valid=None,
@@ -582,6 +621,7 @@ class CorrelationAnalyzer:
                         subject=subject,
                         session_id=session_id,
                         mode=mode,
+                        condition=condition,
                         seed_center_yx=seed_center_yx,
                         seed_radius=seed_radius,
                         eps=eps,
@@ -604,6 +644,7 @@ class CorrelationAnalyzer:
                         subject=subject,
                         session_id=session_id,
                         mode=mode,
+                        condition=condition,
                         arr=None,
                         corr_map=None,
                         n_valid=None,
@@ -630,6 +671,7 @@ class CorrelationAnalyzer:
         subjects: Iterable[str],
         analysis_modes: Iterable[str],
         seed_center_yx: Sequence[int],
+        condition: Optional[str] = None,
         seed_radius: int = 0,
         eps: Optional[float] = None,
         min_samples: Optional[int] = None,
@@ -646,6 +688,7 @@ class CorrelationAnalyzer:
             df_subject = self.run_seed_batch(
                 subject=subject,
                 analysis_modes=analysis_modes,
+                condition=condition,
                 seed_center_yx=seed_center_yx,
                 seed_radius=seed_radius,
                 eps=eps,
@@ -681,6 +724,7 @@ class CorrelationAnalyzer:
         subject: str,
         session_id: str,
         mode: str,
+        condition: Optional[str],
         arr,
         corr_map,
         n_valid,
@@ -695,6 +739,7 @@ class CorrelationAnalyzer:
             "subject": subject,
             "session_id": str(session_id),
             "mode": str(mode),
+            "condition": str(hf._normalize_condition(condition)),
             "status": str(status),
             "reason": str(reason),
             "seed_y": int(seed_center_yx[0]),
