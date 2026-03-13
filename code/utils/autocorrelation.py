@@ -6,17 +6,16 @@ from typing import Any, Dict, Iterable, Optional, Sequence
 
 deriv_root = None
 eda_root_name = "eda"
-acf_qc_filename = "acf_qc_summary.csv"
 fdiff_robust_pctl = (2.0, 98.0)
 spatial_eps = 1e-8
 spatial_min_valid_samples = 8
+acf_qc_summary_name = "acf_qc_summary.csv"
 """Autocorrelation analysis utilities for fUS data."""
 
 
 def configure(
     deriv_root_path=None,
     eda_root_name=None,
-    acf_qc_filename=None,
     frame_diff_robust_pctl=None,
     spatial_eps=None,
     spatial_min_valid_samples=None,
@@ -26,8 +25,6 @@ def configure(
         module_state["deriv_root"] = Path(deriv_root_path)
     if eda_root_name is not None:
         module_state["eda_root_name"] = str(eda_root_name)
-    if acf_qc_filename is not None:
-        module_state["acf_qc_filename"] = str(acf_qc_filename)
     if frame_diff_robust_pctl is not None:
         module_state["fdiff_robust_pctl"] = tuple(
             float(v) for v in frame_diff_robust_pctl
@@ -188,7 +185,7 @@ def standardized_acf(x, max_lag):
 
 def load_acf_qc_map_for_subject(subject):
     root_base = _ensure_deriv_root_or_raise()
-    qc_path = root_base / subject / acf_qc_filename
+    qc_path = root_base / str(subject) / str(acf_qc_summary_name)
     if not qc_path.exists():
         return {}
 
@@ -456,7 +453,6 @@ class CorrelationAnalyzer:
         self,
         deriv_root_path: Optional[Path] = None,
         eda_root_name_value: str = "eda",
-        acf_qc_filename_value: str = "acf_qc_summary.csv",
         frame_diff_robust_pctl: Sequence[float] = (2.0, 98.0),
         spatial_eps_value: float = 1e-8,
         spatial_min_valid_samples_value: int = 8,
@@ -464,7 +460,6 @@ class CorrelationAnalyzer:
         configure(
             deriv_root_path=deriv_root_path,
             eda_root_name=eda_root_name_value,
-            acf_qc_filename=acf_qc_filename_value,
             frame_diff_robust_pctl=frame_diff_robust_pctl,
             spatial_eps=spatial_eps_value,
             spatial_min_valid_samples=spatial_min_valid_samples_value,
@@ -811,4 +806,3 @@ class CorrelationAnalyzer:
 # Backward-compatible aliases used in older notebook cells.
 _analysis_subject_root = analysis_subject_root
 _robust_limits = robust_limits
-

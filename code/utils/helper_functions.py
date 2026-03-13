@@ -677,7 +677,9 @@ def plot_fus_timecourse_with_labels(
     label_path_or_dir=None,
     label_colors=None,
     alpha=0.15,
-    sessions=None
+    sessions=None,
+    save_dir=None,
+    save_dpi=180,
 ):
     """
     Plot raw fUS timecourse(s) with behavioral label shading.
@@ -694,6 +696,10 @@ def plot_fus_timecourse_with_labels(
        - sessions="first": plot only the first matched session
        - sessions="Se01072020": plot one session
        - sessions=["Se01072020", "Se02072020"]: plot selected sessions
+
+    Saving:
+       - save_dir=None: show figures only (default)
+       - save_dir=".../folder": save one PNG per selected session
     """
     if label_colors is None:
         label_colors = {-1: 'lightblue', 0: 'red', 1: 'lightgreen'}
@@ -765,6 +771,10 @@ def plot_fus_timecourse_with_labels(
             )
         selected_sessions = [(fus_path_or_dir, label_path_or_dir)]
 
+    save_dir_path = Path(save_dir) if save_dir is not None else None
+    if save_dir_path is not None:
+        save_dir_path.mkdir(parents=True, exist_ok=True)
+
     # Plot each selected session
     for fus_path, label_path in selected_sessions:
         mat = scipy.io.loadmat(fus_path)
@@ -783,7 +793,14 @@ def plot_fus_timecourse_with_labels(
         ax.set_ylabel('Raw fUS intensity (a.u.)')
         ax.legend(loc='upper right')
         ax.grid(alpha=0.3)
+
+        if save_dir_path is not None:
+            out_path = save_dir_path / f"{session_name}_raw_timecourse.png"
+            fig.savefig(out_path, dpi=save_dpi, bbox_inches='tight')
+            print(f"Saved raw timecourse: {out_path}")
+
         plt.show()
+        plt.close(fig)
 
 """
 Author: Leo Sperber, 2025

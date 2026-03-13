@@ -9,6 +9,13 @@ def _to_numpy(x):
     return np.asarray(x)
 
 
+def _as_metric_frames(x):
+    arr = np.asarray(x)
+    if arr.ndim <= 2:
+        return arr.reshape(1, -1)
+    return arr.reshape(arr.shape[0], -1)
+
+
 def iter_windows(dataset, max_items=None):
     """
     Yield (context, target) from dataset as numpy arrays.
@@ -84,11 +91,15 @@ def sample_train_frames_for_pca_per_acq(train_ds, max_frames, seed):
 
 def compute_frame_metrics(y_true, y_pred, standardize=False, eps=1e-8, decimals=3):
     """
-    Compute framewise metrics across pixels.
-    If standardize is True, z-score both y_true and y_pred using y_true stats.
+    Compute metrics across all predicted pixels and horizons for one window.
+    If standardize is True, z-score each target frame using y_true stats.
     """
     yt = np.asarray(y_true).squeeze()
     yp = np.asarray(y_pred).squeeze()
+    if yt.shape != yp.shape:
+        raise ValueError(
+            f"y_true and y_pred must have matching shapes, got {yt.shape} vs {yp.shape}"
+        )
     if np.issubdtype(yt.dtype, np.integer) or np.issubdtype(yp.dtype, np.integer):
         warnings.warn(
             "compute_frame_metrics received integer inputs; metrics should be computed on float-space arrays.",
@@ -96,15 +107,17 @@ def compute_frame_metrics(y_true, y_pred, standardize=False, eps=1e-8, decimals=
         )
     yt = yt.astype(np.float32, copy=False)
     yp = yp.astype(np.float32, copy=False)
-    yt = yt.reshape(-1)
-    yp = yp.reshape(-1)
     if bool(standardize):
-        mu = float(yt.mean())
-        sigma = float(yt.std())
-        if sigma < float(eps):
-            sigma = 1.0
-        yt = (yt - mu) / sigma
-        yp = (yp - mu) / sigma
+        yt_frames = _as_metric_frames(yt)
+        yp_frames = _as_metric_frames(yp)
+        mu = yt_frames.mean(axis=1, keepdims=True)
+        sigma = yt_frames.std(axis=1, keepdims=True)
+        sigma = np.where(sigma < float(eps), 1.0, sigma)
+        yt = ((yt_frames - mu) / sigma).reshape(-1)
+        yp = ((yp_frames - mu) / sigma).reshape(-1)
+    else:
+        yt = yt.reshape(-1)
+        yp = yp.reshape(-1)
     err = yp - yt
     mse = np.mean(err ** 2)
     rmse = np.sqrt(mse)
@@ -135,8 +148,18 @@ def evaluate_model_on_dataset(
     per_window = []
     for context, target in iter_windows(test_ds, max_items=max_items):
         pred = predict_fn(context)
+        pred_arr = np.asarray(pred)
+        target_arr = np.asarray(target)
+        if pred_arr.shape != target_arr.shape:
+            raise ValueError(
+                "predict_fn returned shape "
+                f"{pred_arr.shape}, expected {target_arr.shape}"
+            )
         metrics = compute_frame_metrics(
-            target[0], pred[0], standardize=standardize, decimals=decimals
+            target_arr,
+            pred_arr,
+            standardize=standardize,
+            decimals=decimals,
         )
         per_window.append(metrics)
     if len(per_window) == 0:
@@ -248,18 +271,23 @@ def predict_pixel_ar(context, params, K=1):
     """
     Predict next frame using fitted per-pixel AR parameters.
     """
-    if int(K) != 1:
-        raise ValueError("Phase 1 PixelAR supports K=1 only.")
     x = _to_numpy(context)
     p = int(params["p"])
     A = params["A"]
     b = params["b"]
-    lags = x[-p:, 0]
-    pred = b.copy()
-    for i in range(p):
-        pred += A[:, :, i] * lags[i]
-    pred = pred[np.newaxis, np.newaxis, ...]
-    return pred
+    if x.shape[0] < p:
+        raise ValueError("Context shorter than p.")
+
+    history = [frame.copy() for frame in np.asarray(x[-p:, 0], dtype=np.float32)]
+    preds = []
+    for _ in range(int(K)):
+        lags = np.stack(history[-p:], axis=0)
+        pred = b.astype(np.float32, copy=True)
+        for i in range(p):
+            pred += A[:, :, i] * lags[i]
+        preds.append(pred)
+        history.append(pred)
+    return np.stack(preds, axis=0)[:, np.newaxis, ...]
 
 
 def _fit_pca(frames_flat, d):
@@ -380,23 +408,29 @@ def predict_pca_var(context, params, K=1):
     """
     Predict next frame using PCA+VAR parameters.
     """
-    if int(K) != 1:
-        raise ValueError("Phase 1 PCA-VAR supports K=1 only.")
     x = _to_numpy(context)
     p = int(params["p"])
     mean = params["mean"]
     components = params["components"]
     W = params["var_weights"]
-    ctx = x[-p:, 0].reshape(p, -1)
-    latents = (ctx - mean) @ components.T
-    x_feat = latents.reshape(-1)
-    x_aug = np.concatenate([np.ones(1, dtype=x_feat.dtype), x_feat], axis=0)
-    pred_latent = x_aug @ W
-    pred_flat = pred_latent @ components + mean
+    if x.shape[0] < p:
+        raise ValueError("Context shorter than p.")
+
+    history = [frame.copy() for frame in np.asarray(x[-p:, 0], dtype=np.float32)]
+    preds = []
     H = x.shape[-2]
     Wd = x.shape[-1]
-    pred = pred_flat.reshape(H, Wd)
-    return pred[np.newaxis, np.newaxis, ...]
+    for _ in range(int(K)):
+        ctx = np.stack(history[-p:], axis=0).reshape(p, -1)
+        latents = (ctx - mean) @ components.T
+        x_feat = latents.reshape(-1)
+        x_aug = np.concatenate([np.ones(1, dtype=x_feat.dtype), x_feat], axis=0)
+        pred_latent = x_aug @ W
+        pred_flat = pred_latent @ components + mean
+        pred = pred_flat.reshape(H, Wd).astype(np.float32, copy=False)
+        preds.append(pred)
+        history.append(pred)
+    return np.stack(preds, axis=0)[:, np.newaxis, ...]
 
 
 def fit_pca_ar_diag(
@@ -499,25 +533,29 @@ def predict_pca_ar_diag(context, params, K=1):
     """
     Predict next frame using PCA + per-component AR(p) parameters.
     """
-    if int(K) != 1:
-        raise ValueError("Phase 1 PCA-AR supports K=1 only.")
     x = _to_numpy(context)
     p = int(params["p"])
     mean = params["mean"]
     components = params["components"]
     W = params["ar_weights"]  # [d, p+1]
+    if x.shape[0] < p:
+        raise ValueError("Context shorter than p.")
 
-    ctx = x[-p:, 0].reshape(p, -1)
-    latents = (ctx - mean) @ components.T  # [p, d]
-    # Predict each component independently
-    z_pred = W[:, 0].copy()
-    for i in range(p):
-        z_pred += W[:, i + 1] * latents[-(i + 1)]
-    pred_flat = z_pred @ components + mean
+    history = [frame.copy() for frame in np.asarray(x[-p:, 0], dtype=np.float32)]
+    preds = []
     H = x.shape[-2]
     Wd = x.shape[-1]
-    pred = pred_flat.reshape(H, Wd)
-    return pred[np.newaxis, np.newaxis, ...]
+    for _ in range(int(K)):
+        ctx = np.stack(history[-p:], axis=0).reshape(p, -1)
+        latents = (ctx - mean) @ components.T  # [p, d]
+        z_pred = W[:, 0].copy()
+        for i in range(p):
+            z_pred += W[:, i + 1] * latents[-(i + 1)]
+        pred_flat = z_pred @ components + mean
+        pred = pred_flat.reshape(H, Wd).astype(np.float32, copy=False)
+        preds.append(pred)
+        history.append(pred)
+    return np.stack(preds, axis=0)[:, np.newaxis, ...]
 
 
 def plot_triplet(gt, pred, residual, title=None):
