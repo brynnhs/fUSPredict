@@ -29,6 +29,12 @@ eda:
   - raw
   - mean_divide
   - zscore
+  processing_conditions:
+  - unfiltered
+  - filtered
+  run_all_conditions: true
+  default_condition: unfiltered
+  require_qc_csv: false
   distribution:
     n_bins: 120
     max_points: 500000
@@ -39,7 +45,6 @@ eda:
       zscore:
       - -3.0
       - 3.0
-  acf_qc_filename: acf_qc_summary.csv
   frame_diff_robust_percentiles:
     - 2.0
     - 98.0
@@ -47,5 +52,42 @@ eda:
   spatial_min_valid_samples: 8
 
 modeling:
+  run_mode: reload_saved  # one of: rerun_modeling, reload_saved
   random_seed: 42
-  openstl_root: null
+  data_mode: zscore
+  processing_condition: filtered
+  val_ratio: 0.1
+  eval_split: val  # one of: val, test
+  lags:
+    - 1
+    - 5
+    - 10
+    - 20
+  rollout_horizons:
+    - 1
+    - 5
+    - 10
+    - 20
+  rollout_mode: multistep  # one of: multistep, onestep
+  window_size: 40
+  pred_horizon: 1
+  dataset_stride: 1
+  pixel_ar_fit_max_items: null
+  eval_max_items: null
+  horizon_eval_max_items: null
+
+preprocessing:
+  filtering:
+    enable_highpass: true
+    highpass_cutoff_hz: 0.05
+    highpass_order: 4
+    enable_pca: false
+    pca_var_keep: 0.95
+    pca_n_components: null
+    enable_clip: true
+    clip_bottom: 1.0
+    clip_top: 99.0
+    fps_fallback: 1
+    overwrite: true
+  standardization:
+    overwrite: true

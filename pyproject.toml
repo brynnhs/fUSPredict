@@ -2,14 +2,10 @@
 line-length = 88
 target-version = "py311"
 exclude = [".venv", "build", "dist"]
-
-[tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP"]
-
-[tool.ruff]
 src = ["code"]
 
 [tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
 # (optional) but usually you want isort rules on
 extend-select = ["I"]
 
