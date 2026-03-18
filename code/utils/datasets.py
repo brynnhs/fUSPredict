@@ -9,6 +9,19 @@ from torch.utils.data import Dataset
 from utils import helper_functions as hf
 
 
+def _infer_subject_from_path(path_str):
+    path = Path(path_str)
+    lower_parts = [part.lower() for part in path.parts]
+    for idx in range(len(path.parts) - 2):
+        if lower_parts[idx] == "derivatives" and lower_parts[idx + 1] == "preprocessing":
+            return str(path.parts[idx + 2])
+
+    parent = path.parent
+    if parent.name.startswith("baseline_only") and parent.parent != parent:
+        return str(parent.parent.name)
+    return str(parent.name)
+
+
 class FUSForecastWindowDataset(Dataset):
     """
     Per-acquisition sliding-window forecasting dataset.
@@ -80,17 +93,21 @@ class FUSForecastWindowDataset(Dataset):
                     if isinstance(item, dict) and "path" in item and "subject" in item:
                         path_to_subject[str(item["path"])] = str(item["subject"])
             if split is None:
-                paths = list(m.get("train", [])) + list(m.get("test", []))
+                paths = (
+                    list(m.get("train", []))
+                    + list(m.get("val", []))
+                    + list(m.get("test", []))
+                )
             else:
-                if split not in ("train", "test"):
-                    raise ValueError("split must be 'train' or 'test'")
+                if split not in ("train", "val", "test"):
+                    raise ValueError("split must be 'train', 'val', or 'test'")
                 paths = list(m.get(split, []))
         else:
             paths = list(acq_paths)
         if not paths:
             raise ValueError("No acquisition files provided")
         paths = [str(p) for p in paths]
-        subjects = [path_to_subject.get(p, Path(p).parent.name) for p in paths]
+        subjects = [path_to_subject.get(p, _infer_subject_from_path(p)) for p in paths]
         return paths, subjects
 
     def _get_invalid_mask(self, z, Tn, path):

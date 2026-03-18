@@ -1,0 +1,52 @@
+pca_acf:
+  selection:
+    subject: secundo
+    session_idx: 2
+    condition: filtered
+    variant: zscore
+    t_start: null
+    t_stop: null
+
+  sample_display:
+    condition: null
+    variant: null
+    session_idx: null
+
+  pca:
+    mode: var_keep
+    var_keep: 0.95
+    n_components: null
+    standardize_features: false
+
+  k_drop:
+    k_drop_list: [0, 1, 2, 5, 10]
+    pcs_to_inspect: [1, 2, 3, 4, 5, 6]
+
+  acf:
+    signal_def: global_mean
+    max_lag: 500
+    auc_lag_window: 150
+    half_life_threshold: 0.2
+
+  bootstrap:
+    enabled: true
+    n_boot: 300
+    ci: 95.0
+    block_len: 32
+    min_block_len: 8
+    seed: 42
+
+  sanity:
+    k_drop_ref: 1
+    psd_enabled: true
+    psd_fs_hz: 1.0
+    psd_nperseg_max: 256
+    psd_fmin: 0.01
+    psd_fmax: 0.5
+
+  video:
+    enabled: true
+    n_frames: 300
+    fps: 10
+    panel_gap_px: 2
+    signed_abs_percentile: 97.0

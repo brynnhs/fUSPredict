@@ -1,0 +1,93 @@
+# fUSPredict canonical configuration
+
+project:
+  name: fUSPredict
+  repo_root: .
+
+paths:
+  code: code
+  config: config
+  sourcedata: sourcedata
+  derivatives: derivatives
+  preprocessing: derivatives/preprocessing
+  utils: code/utils
+  modeling: derivatives/modeling
+  videos: derivatives/videos
+  manifests:
+    splits_multi: derivatives/preprocessing/splits_multi.json
+    splits_single_secundo: derivatives/preprocessing/splits_single_secundo.json
+
+subjects:
+  all:
+    - secundo
+    - gus
+  default: secundo
+
+eda:
+  root_name: eda
+  analysis_modes:
+  - raw
+  - mean_divide
+  - zscore
+  processing_conditions:
+  - unfiltered
+  - filtered
+  run_all_conditions: true
+  default_condition: unfiltered
+  require_qc_csv: false
+  distribution:
+    n_bins: 120
+    max_points: 500000
+    mode_ranges:
+      mean_divide:
+      - -0.25
+      - 0.25
+      zscore:
+      - -3.0
+      - 3.0
+  frame_diff_robust_percentiles:
+    - 2.0
+    - 98.0
+  spatial_eps: 1.0e-8
+  spatial_min_valid_samples: 8
+
+modeling:
+  run_mode: reload_saved  # one of: rerun_modeling, reload_saved
+  random_seed: 42
+  data_mode: zscore
+  processing_condition: filtered
+  val_ratio: 0.1
+  eval_split: val  # one of: val, test
+  lags:
+    - 1
+    - 5
+    - 10
+    - 20
+  rollout_horizons:
+    - 1
+    - 5
+    - 10
+    - 20
+  rollout_mode: multistep  # one of: multistep, onestep
+  window_size: 40
+  pred_horizon: 1
+  dataset_stride: 1
+  pixel_ar_fit_max_items: null
+  eval_max_items: null
+  horizon_eval_max_items: null
+
+preprocessing:
+  filtering:
+    enable_highpass: true
+    highpass_cutoff_hz: 0.05
+    highpass_order: 4
+    enable_pca: false
+    pca_var_keep: 0.95
+    pca_n_components: null
+    enable_clip: true
+    clip_bottom: 1.0
+    clip_top: 99.0
+    fps_fallback: 1
+    overwrite: true
+  standardization:
+    overwrite: true

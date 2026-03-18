@@ -2,6 +2,12 @@
 line-length = 88
 target-version = "py311"
 exclude = [".venv", "build", "dist"]
+src = ["code"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
+# (optional) but usually you want isort rules on
+extend-select = ["I"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["utils"]
