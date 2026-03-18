@@ -23,17 +23,14 @@ subjects:
     - gus
   default: secundo
 
+data_selection:
+  modes: zscore  # one of: raw, mean_divide, zscore, [..], all
+  conditions: all  # one of: unfiltered, filtered, [..], all
+  default_mode: zscore
+  default_condition: unfiltered
+
 eda:
   root_name: eda
-  analysis_modes:
-  - raw
-  - mean_divide
-  - zscore
-  processing_conditions:
-  - unfiltered
-  - filtered
-  run_all_conditions: true
-  default_condition: unfiltered
   require_qc_csv: false
   distribution:
     n_bins: 120
@@ -52,10 +49,8 @@ eda:
   spatial_min_valid_samples: 8
 
 modeling:
-  run_mode: reload_saved  # one of: rerun_modeling, reload_saved
+  run_mode: rerun_modeling  # one of: rerun_modeling, reload_saved
   random_seed: 42
-  data_mode: zscore
-  processing_condition: filtered
   val_ratio: 0.1
   eval_split: val  # one of: val, test
   lags:

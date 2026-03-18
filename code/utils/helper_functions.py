@@ -11,6 +11,7 @@ import scipy.io
 from matplotlib.path import Path as MatplotlibPath
 from scipy import ndimage as ndi
 from scipy import signal
+from utils.data_selection import SUPPORTED_CONDITIONS, SUPPORTED_MODES, get_cache_subdir
 
 try:
     import torch
@@ -379,10 +380,8 @@ def _normalize_condition(condition):
     if condition is None:
         return CONDITION_UNFILTERED
     cond = str(condition).strip().lower()
-    if cond == CONDITION_UNFILTERED:
-        return CONDITION_UNFILTERED
-    if cond == CONDITION_FILTERED:
-        return CONDITION_FILTERED
+    if cond in SUPPORTED_CONDITIONS:
+        return cond
     raise ValueError(
         f"Unsupported condition={condition!r}; expected '{CONDITION_UNFILTERED}' or '{CONDITION_FILTERED}'."
     )
@@ -408,17 +407,12 @@ def load_saved_baseline_sessions(base_dir):
 def get_baseline_dir(deriv_root, subject, mode, condition=None):
     deriv_root = _resolve_deriv_root(deriv_root)
     cond = _normalize_condition(condition)
-    mode = str(mode)
+    mode = str(mode).strip().lower()
 
-    if mode == "raw":
-        if cond == CONDITION_FILTERED:
-            return Path(deriv_root) / subject / "baseline_only_filtered"
-        return Path(deriv_root) / subject / "baseline_only_reoriented_resized"
+    if mode not in SUPPORTED_MODES:
+        raise ValueError(f"Unsupported mode={mode!r}; expected 'raw', 'mean_divide', or 'zscore'.")
 
-    if mode in {"mean_divide", "zscore"}:
-        return Path(deriv_root) / subject / "baseline_only_standardized"
-
-    raise ValueError(f"Unsupported mode={mode!r}; expected 'raw', 'mean_divide', or 'zscore'.")
+    return Path(deriv_root) / str(subject) / get_cache_subdir(mode, cond)
 
 
 def _candidate_session_paths(deriv_root, subject, session_id, mode, condition=None):

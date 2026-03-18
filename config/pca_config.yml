@@ -2,14 +2,10 @@ pca_acf:
   selection:
     subject: secundo
     session_idx: 2
-    condition: filtered
-    variant: zscore
     t_start: null
     t_stop: null
 
   sample_display:
-    condition: null
-    variant: null
     session_idx: null
 
   pca:
